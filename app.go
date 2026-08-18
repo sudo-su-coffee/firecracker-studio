@@ -49,7 +49,7 @@ func (a *App) AddServer(name, baseURL, kind, username, bearer string) (connectio
 	if baseURL == "" {
 		return connections.Server{}, fmt.Errorf("worker URL is required")
 	}
-	server := connections.Server{ID: uuid.NewString(), Name: name, URL: baseURL, Kind: kind, Username: username, Health: "unchecked"}
+	server := connections.Server{ID: uuid.NewString(), Name: name, URL: baseURL, Kind: kind, Username: username, BearerToken: bearer, Health: "unchecked"}
 	a.servers = append(a.servers, server)
 	if _, err := a.checkURL(baseURL, bearer); err != nil {
 		server.Health = "unhealthy"
@@ -69,7 +69,7 @@ func (a *App) AddServer(name, baseURL, kind, username, bearer string) (connectio
 func (a *App) CheckServer(id string) (connections.Server, error) {
 	for i := range a.servers {
 		if a.servers[i].ID == id {
-			status, err := a.checkURL(a.servers[i].URL, a.bearer)
+			status, err := a.checkURL(a.servers[i].URL, a.servers[i].BearerToken)
 			now := time.Now().UTC()
 			a.servers[i].LastChecked = &now
 			if err != nil {
@@ -92,7 +92,7 @@ func (a *App) SwitchServer(id string) (connections.Server, error) {
 				}
 			}
 			a.baseURL = a.servers[i].URL
-			a.bearer = ""
+			a.bearer = a.servers[i].BearerToken
 			for j := range a.servers {
 				a.servers[j].Active = j == i
 			}

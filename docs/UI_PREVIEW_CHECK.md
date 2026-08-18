@@ -25,3 +25,11 @@ The final preview at `http://127.0.0.1:4173` shows exactly four primary sidebar 
 Four-tab screenshot: `/home/ubuntu/screenshots/127_0_0_1_2026-08-18_06-22-36_9020.webp`
 
 Advanced operations such as terminal, logs, file management, SSH, snapshots, and restore are now intended to live inside the selected microVM detail view rather than as primary navigation tabs. The current UI still contains legacy unreachable templates for those views and they should be consolidated into the microVM detail panel in the next cleanup pass.
+
+## Shadcn-inspired local-first preview
+
+The latest preview uses a neutral zinc/black shadcn-inspired theme with restrained borders, focused inputs, accessible contrast, compact status badges, and clear card hierarchy. The dashboard visibly includes the first-run local worker setup card, health-check action, server manager action, account selector, and local worker selector.
+
+Latest screenshot: `/home/ubuntu/screenshots/127_0_0_1_2026-08-18_06-28-16_2868.webp`
+
+The local API health check returned `{"service":"firecracker-studio","status":"ok"}` and the managed base-image endpoint returned the catalog successfully. A true remote server was not available in the sandbox, but the native Go bridge now stores each remote profile's bearer token in memory and uses it for health checks and server switching.

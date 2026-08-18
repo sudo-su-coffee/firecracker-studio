@@ -17,4 +17,5 @@ type Server struct {
 	Health      string     `json:"health"`
 	LastChecked *time.Time `json:"lastChecked,omitempty"`
 	Active      bool       `json:"active"`
+	BearerToken string     `json:"-"`
 }
