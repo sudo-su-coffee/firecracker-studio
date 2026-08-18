@@ -83,7 +83,18 @@ export const SwitchServer = call('SwitchServer', async (id) => {
 export const SetConnection = call('SetConnection', async () => undefined)
 
 export const Health = call('Health', () => webRequest('/health'))
+export const Metrics = call('Metrics', () => webRequest('/metrics'))
+export const MetricsStream = (onMessage, onError) => {
+  const source = new EventSource(`${webBase()}/metrics/stream`)
+  source.addEventListener('metrics', event => {
+    try { onMessage(JSON.parse(event.data)) } catch (error) { onError?.(error) }
+  })
+  source.onerror = event => onError?.(event)
+  return source
+}
 export const BaseImages = call('BaseImages', () => webRequest('/base-images').catch(() => ({ images: demoBases })))
+export const MarketplaceImages = call('MarketplaceImages', () => webRequest('/marketplace/images'))
+export const PullMarketplaceImage = call('PullMarketplaceImage', id => webRequest(`/marketplace/images/${encodeURIComponent(id)}/pull`, { method: 'POST', body: '{}' }))
 export const Images = call('Images', () => webRequest('/images'))
 export const Operations = call('Operations', () => webRequest('/operations'))
 export const VMs = call('VMs', () => webRequest('/vms'))
