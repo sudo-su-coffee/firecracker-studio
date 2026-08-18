@@ -46,18 +46,20 @@ log "Downloading official Firecracker ${VERSION} (${RELEASE_ARCH})"
 curl --fail --location --silent --show-error --retry 3 \
   "${BASE}/${ARCHIVE}" -o "$TMP/$ARCHIVE"
 
-# GitHub release archives are verified against the release SHA256SUMS asset.
+# GitHub publishes one checksum file per architecture archive.
+CHECKSUM="${ARCHIVE}.sha256.txt"
 curl --fail --location --silent --show-error --retry 3 \
-  "${BASE}/SHA256SUMS" -o "$TMP/SHA256SUMS"
-grep "  ${ARCHIVE}$" "$TMP/SHA256SUMS" | (cd "$TMP" && sha256sum -c -)
+  "${BASE}/${CHECKSUM}" -o "$TMP/$CHECKSUM"
+(cd "$TMP" && sha256sum -c "$CHECKSUM")
 
 tar -xzf "$TMP/$ARCHIVE" -C "$TMP"
-RELEASE_DIR="$TMP/release-${VERSION}-${RELEASE_ARCH}"
-[ -f "$RELEASE_DIR/firecracker-${VERSION}-${RELEASE_ARCH}" ] || fatal "Firecracker binary missing from official archive"
-[ -f "$RELEASE_DIR/jailer-${VERSION}-${RELEASE_ARCH}" ] || fatal "jailer binary missing from official archive"
+FIRECRACKER_BIN="$(find "$TMP" -type f -name "firecracker-${VERSION}-${RELEASE_ARCH}" -print -quit)"
+JAILER_BIN="$(find "$TMP" -type f -name "jailer-${VERSION}-${RELEASE_ARCH}" -print -quit)"
+[ -n "$FIRECRACKER_BIN" ] || fatal "Firecracker binary missing from official archive"
+[ -n "$JAILER_BIN" ] || fatal "jailer binary missing from official archive"
 
-install -m 0700 "$RELEASE_DIR/firecracker-${VERSION}-${RELEASE_ARCH}" "$BIN/firecracker"
-install -m 0700 "$RELEASE_DIR/jailer-${VERSION}-${RELEASE_ARCH}" "$BIN/jailer"
+install -m 0700 "$FIRECRACKER_BIN" "$BIN/firecracker"
+install -m 0700 "$JAILER_BIN" "$BIN/jailer"
 
 # Best-effort KVM group setup. The user must start a new login session for the
 # group membership to take effect; no privileged change is silently forced.
