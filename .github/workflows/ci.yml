@@ -67,7 +67,7 @@ jobs:
           cleanup() { kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; }
           trap cleanup EXIT
           for attempt in {1..20}; do
-            if curl --fail --silent --show-error http://127.0.0.1:17822/api/v1/health; then
+            if curl --connect-timeout 1 --max-time 2 --fail --silent --show-error http://127.0.0.1:17822/api/v1/health; then
               echo
               exit 0
             fi
