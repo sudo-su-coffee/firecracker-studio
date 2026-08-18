@@ -51,7 +51,7 @@ func (s *Service) Create(ctx context.Context, req VMRequest) (VM, error) {
 	}
 	now := time.Now().UTC()
 
-	vm := VM{ID: id, State: "created", ArtifactDigest: req.ArtifactDigest, CreatedAt: now, UpdatedAt: now}
+	vm := VM{ID: id, State: "created", ArtifactDigest: req.ArtifactDigest, PortMappings: append([]PortMapping(nil), req.PortMappings...), Logs: []string{"created workload", fmt.Sprintf("artifact %s", req.ArtifactDigest)}, CreatedAt: now, UpdatedAt: now}
 	s.mu.Lock()
 	s.vms[id] = vm
 	s.clients[id] = client
@@ -65,9 +65,9 @@ func (s *Service) Start(ctx context.Context, id string) (VM, error) {
 		return VM{}, err
 	}
 	if err := client.Start(ctx); err != nil {
-		return VM{}, err
+		return s.appendLog(id, vm, "start failed: "+err.Error()), err
 	}
-	return s.update(id, "running", vm), nil
+	return s.appendLog(id, s.update(id, "running", vm), "microVM started"), nil
 }
 
 func (s *Service) Stop(ctx context.Context, id string) (VM, error) {
@@ -76,9 +76,9 @@ func (s *Service) Stop(ctx context.Context, id string) (VM, error) {
 		return VM{}, err
 	}
 	if err := client.SendCtrlAltDel(ctx); err != nil {
-		return VM{}, err
+		return s.appendLog(id, vm, "stop failed: "+err.Error()), err
 	}
-	return s.update(id, "stopping", vm), nil
+	return s.appendLog(id, s.update(id, "stopping", vm), "shutdown requested"), nil
 }
 
 func (s *Service) CreateSnapshot(ctx context.Context, id, snapshotPath, memPath string) error {
@@ -89,7 +89,15 @@ func (s *Service) CreateSnapshot(ctx context.Context, id, snapshotPath, memPath 
 	if snapshotPath == "" || memPath == "" {
 		return fmt.Errorf("snapshot and memory paths are required")
 	}
-	return client.CreateSnapshot(ctx, firecracker.SnapshotCreate{SnapshotType: "Full", SnapshotPath: snapshotPath, MemFilePath: memPath})
+	err = client.CreateSnapshot(ctx, firecracker.SnapshotCreate{SnapshotType: "Full", SnapshotPath: snapshotPath, MemFilePath: memPath})
+	if vm, ok := s.Get(id); ok {
+		message := "snapshot created"
+		if err != nil {
+			message = "snapshot failed: " + err.Error()
+		}
+		_ = s.appendLog(id, vm, message)
+	}
+	return err
 }
 
 func (s *Service) RestoreSnapshot(ctx context.Context, id, snapshotPath, memPath string) error {
@@ -100,7 +108,15 @@ func (s *Service) RestoreSnapshot(ctx context.Context, id, snapshotPath, memPath
 	if snapshotPath == "" || memPath == "" {
 		return fmt.Errorf("snapshot and memory paths are required")
 	}
-	return client.LoadSnapshot(ctx, firecracker.SnapshotLoad{SnapshotPath: snapshotPath, MemBackend: memPath})
+	err = client.LoadSnapshot(ctx, firecracker.SnapshotLoad{SnapshotPath: snapshotPath, MemBackend: memPath})
+	if vm, ok := s.Get(id); ok {
+		message := "snapshot restored"
+		if err != nil {
+			message = "restore failed: " + err.Error()
+		}
+		_ = s.appendLog(id, vm, message)
+	}
+	return err
 }
 
 func (s *Service) Get(id string) (VM, bool) {
@@ -133,6 +149,18 @@ func (s *Service) lookup(id string) (*firecracker.Client, VM, error) {
 
 func (s *Service) update(id, state string, vm VM) VM {
 	vm.State = state
+	vm.UpdatedAt = time.Now().UTC()
+	s.mu.Lock()
+	s.vms[id] = vm
+	s.mu.Unlock()
+	return vm
+}
+
+func (s *Service) appendLog(id string, vm VM, message string) VM {
+	vm.Logs = append(vm.Logs, time.Now().UTC().Format(time.RFC3339)+" "+message)
+	if len(vm.Logs) > 100 {
+		vm.Logs = vm.Logs[len(vm.Logs)-100:]
+	}
 	vm.UpdatedAt = time.Now().UTC()
 	s.mu.Lock()
 	s.vms[id] = vm

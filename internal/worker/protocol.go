@@ -41,11 +41,13 @@ type PortMapping struct {
 }
 
 type VM struct {
-	ID             string    `json:"id"`
-	State          string    `json:"state"`
-	ArtifactDigest string    `json:"artifactDigest"`
-	CreatedAt      time.Time `json:"createdAt"`
-	UpdatedAt      time.Time `json:"updatedAt"`
+	ID             string        `json:"id"`
+	State          string        `json:"state"`
+	ArtifactDigest string        `json:"artifactDigest"`
+	PortMappings   []PortMapping `json:"portMappings,omitempty"`
+	Logs           []string      `json:"logs,omitempty"`
+	CreatedAt      time.Time     `json:"createdAt"`
+	UpdatedAt      time.Time     `json:"updatedAt"`
 }
 
 type Client struct {
