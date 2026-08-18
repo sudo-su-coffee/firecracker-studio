@@ -11,3 +11,9 @@ The six catalog profiles are Alpine 3.24.1 for x86_64 and aarch64, Debian 12 for
 Preview screenshot: `/home/ubuntu/screenshots/127_0_0_1_2026-08-18_06-14-17_6332.webp`
 
 This preview confirms the UI composition only. Native Wails execution and Firecracker execution still require the appropriate host backend and worker API.
+
+## Sidebar workspace inspection
+
+The redesigned preview at `http://127.0.0.1:4173` now renders as a Wails/Vue desktop-style control center with navigation for Overview, MicroVMs, Images, Marketplace, Live logs, Terminal, File manager, SSH & access, Snapshots, and Settings. The overview shows worker connection, Firecracker readiness checks, image conversion, workload metrics, and recent microVMs. The browser-safe adapter reports a preview worker state and displays the six managed catalog profiles without requiring native Wails bindings.
+
+Redesigned screenshot: `/home/ubuntu/screenshots/127_0_0_1_2026-08-18_06-17-58_9668.webp`
