@@ -6,11 +6,19 @@ Firecracker Studio is a Wails desktop application. Its normal execution path is 
 
 Inside native Linux or WSL2 Ubuntu, run:
 
+The repository is currently private. Use authenticated GitHub CLI access without placing a personal token in the URL:
+
+```bash
+gh api repos/sudo-su-coffee/firecracker-studio/contents/scripts/install-runtime.sh -H 'Accept: application/vnd.github.raw' | bash
+```
+
+If the repository becomes public, the token-free raw form is:
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/sudo-su-coffee/firecracker-studio/main/scripts/install-runtime.sh | bash
 ```
 
-For a locally cloned checkout, use:
+For a cloned repository, use:
 
 ```bash
 cd firecracker-studio

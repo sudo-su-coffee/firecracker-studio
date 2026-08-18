@@ -96,7 +96,13 @@ wsl --shutdown
 
 ## Linux and WSL2 one-command runtime bootstrap
 
-For a native Linux host or WSL2 Ubuntu, the unattended runtime bootstrap is:
+For a native Linux host or WSL2 Ubuntu, the repository is currently private, so the recommended authenticated one-line bootstrap is:
+
+```bash
+gh api repos/sudo-su-coffee/firecracker-studio/contents/scripts/install-runtime.sh -H 'Accept: application/vnd.github.raw' | bash
+```
+
+If the repository is made public later, the token-free raw form will be:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/sudo-su-coffee/firecracker-studio/main/scripts/install-runtime.sh | bash

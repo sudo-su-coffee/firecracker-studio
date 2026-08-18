@@ -66,6 +66,14 @@ A browser cannot access KVM, jailer, or Unix sockets. The Go server must run on 
 
 On Windows, run the Go web server inside WSL2 for the simplest local setup, then open the WSL2 listener from the Windows browser. The one-command runtime bootstrap is:
 
+Because the repository is currently private, install the runtime with the authenticated GitHub CLI:
+
+```bash
+gh api repos/sudo-su-coffee/firecracker-studio/contents/scripts/install-runtime.sh -H 'Accept: application/vnd.github.raw' | bash
+```
+
+If the repository becomes public, use the token-free raw URL:
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/sudo-su-coffee/firecracker-studio/main/scripts/install-runtime.sh | bash
 ```
