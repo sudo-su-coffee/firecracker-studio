@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -48,10 +49,8 @@ func (s *Service) Create(ctx context.Context, req VMRequest) (VM, error) {
 	if err != nil {
 		return VM{}, err
 	}
-	if err := client.SetMachineConfig(ctx, firecracker.MachineConfig{VCPUCount: req.VCPUs, MemSizeMiB: req.MemoryMiB, Smt: false}); err != nil {
-		return VM{}, fmt.Errorf("configure VM: %w", err)
-	}
 	now := time.Now().UTC()
+
 	vm := VM{ID: id, State: "created", ArtifactDigest: req.ArtifactDigest, CreatedAt: now, UpdatedAt: now}
 	s.mu.Lock()
 	s.vms[id] = vm
@@ -149,5 +148,9 @@ func (f DirectorySocketFactory) NewSocket(vmID string) (string, error) {
 	if f.Dir == "" {
 		return "", fmt.Errorf("socket directory is required")
 	}
-	return filepath.Join(f.Dir, vmID, "firecracker.sock"), nil
+	dir := filepath.Join(f.Dir, vmID)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return "", fmt.Errorf("create VM directory: %w", err)
+	}
+	return filepath.Join(dir, "firecracker.sock"), nil
 }
