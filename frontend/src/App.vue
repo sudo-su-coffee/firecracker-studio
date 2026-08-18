@@ -54,7 +54,6 @@ async function addServer() {
     await SetConnection(server.url, server.token || '')
     await SwitchServer(server.id)
     state.showAddWorker = false
-    state.showWorkers = true
     data.message = `Connected to ${server.name}`
     state.newServer = { name: 'Remote worker', url: '', kind: 'remote', username: '', token: '' }
     await refresh()
