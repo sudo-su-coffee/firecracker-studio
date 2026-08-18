@@ -41,15 +41,15 @@ wsl --list --verbose
 
 The distribution must show version `2`.
 
-## What the installer can automate
+## What the installer does not automate
 
-On first launch, Firecracker Studio should automatically detect WSL, locate or create the configured Ubuntu distribution, check whether `/dev/kvm` exists and is readable/writable, check the Firecracker and `jailer` binaries, check the Linux kernel and base rootfs catalog, check TAP/network capability, create its data directory, start the worker, and call the worker health endpoint. The UI should display a repair action for every failed check.
+The installer only installs the Firecracker Studio desktop application, creates shortcuts, and stores the application configuration. It does not install WSL2, install Firecracker, start the Porter worker, modify `/dev/kvm`, create TAP interfaces, or change firewall and Linux permissions.
 
-The installer can safely install the Windows application, create shortcuts, store the selected WSL distribution name, and register the application’s local configuration. It can also invoke `wsl.exe` to inspect status. It should not silently modify firewall rules, kernel files, privileged network interfaces, or user credentials.
+On first launch, the user manually adds a server profile with the worker URL. Studio then performs the health check and allows switching only when the endpoint responds successfully. A connection refusal means that the worker is not running at that URL or that the URL is not reachable from Windows.
 
-## What still requires explicit approval or manual work
+## What requires manual work
 
-WSL installation, Windows restart, BIOS/UEFI virtualization, Hyper-V/Virtual Machine Platform availability, `/dev/kvm` exposure, TAP creation, firewall changes, and privileged Linux group changes can require administrator approval or a host restart. The application must show the exact command and ask the user to approve it instead of pretending that the `.exe` can guarantee success on every Windows host.
+The user is responsible for WSL installation, the Windows restart, BIOS/UEFI virtualization, Hyper-V/Virtual Machine Platform availability, `/dev/kvm` access, Firecracker and `jailer` installation, kernel/rootfs preparation, TAP networking, firewall rules, and starting the worker process. This separation keeps the desktop app predictable and avoids silently changing privileged host configuration.
 
 ## WSL2 backend readiness checks
 
@@ -82,13 +82,13 @@ This command is not active until `scripts/install-linux.sh` is committed and the
 
 ## Recommended first-run flow
 
-1. Install and launch Firecracker Studio.
-2. Choose **Local WSL2** on Windows or **Local Linux** on Linux.
-3. Let Studio run non-destructive checks.
-4. Approve only the listed privileged repairs, such as creating a TAP interface or granting `/dev/kvm` access.
-5. Studio downloads the selected Alpine default base, kernel, and rootfs artifacts and verifies their digests.
+1. Install and launch WSL2 Ubuntu manually on Windows, or prepare native Linux.
+2. Install Firecracker and `jailer`, prepare KVM/TAP access, and start the Porter worker manually.
+3. Install and launch Firecracker Studio.
+4. Open **Servers → Add server**, select **Local**, and enter the worker URL, normally `http://127.0.0.1:7822` when the worker is listening inside the same reachable environment.
+5. Select **Check health and add**. Studio switches to the worker only after a successful health response.
 6. Import a Docker/OCI image or open a Compose file.
-7. Studio builds artifacts through BuildKit without requiring Docker Engine, then starts isolated Firecracker microVMs.
+7. Studio sends conversion and lifecycle requests to the selected worker; the worker builds artifacts through BuildKit and starts isolated Firecracker microVMs.
 
 ## Important distinction
 

@@ -22,8 +22,7 @@ type App struct {
 }
 
 func NewApp() *App {
-	server := connections.Server{ID: uuid.NewString(), Name: "Local worker", URL: "http://127.0.0.1:7822", Kind: "local", Health: "unchecked", Active: true}
-	return &App{baseURL: server.URL, http: &http.Client{Timeout: 30 * time.Second}, servers: []connections.Server{server}}
+	return &App{http: &http.Client{Timeout: 30 * time.Second}}
 }
 
 func (a *App) startup(ctx context.Context) {
