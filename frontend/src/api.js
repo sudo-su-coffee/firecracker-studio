@@ -92,4 +92,3 @@ export const CreateVM = call('CreateVM', (artifactDigest, vcpus, memoryMiB) => w
 export const VMAction = call('VMAction', (id, action) => webRequest(`/vms/${encodeURIComponent(id)}/${action}`, { method: 'POST', body: '{}' }))
 export const Snapshot = call('Snapshot', (id, action, snapshotPath, memoryPath) => webRequest(`/vms/${encodeURIComponent(id)}/snapshots${action === 'restore' ? '/restore' : ''}`, { method: 'POST', body: JSON.stringify({ snapshotPath, memoryPath }) }))
 export const RuntimeStatus = call('RuntimeStatus', () => ({ platform: 'web', installed: false, firecracker: 'managed by Linux runtime', jailer: 'managed by Linux runtime', kvm: 'runtime API', tap: 'runtime API', kernel: 'catalog', rootfs: 'catalog', message: 'Web mode is connected to the Firecracker Studio runtime API' }))
-export const InstallRuntime = call('InstallRuntime', () => Promise.reject(new Error('Install the Linux/WSL2 runtime from the host, then refresh the web UI')))
