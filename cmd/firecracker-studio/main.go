@@ -10,6 +10,7 @@ import (
 	"github.com/sudo-su-coffee/firecracker-studio/internal/api"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/config"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/converter"
+	"github.com/sudo-su-coffee/firecracker-studio/internal/images"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/operations"
 )
 
@@ -29,7 +30,8 @@ func main() {
 		log.Error("failed to initialize operation manager", "error", err)
 		os.Exit(1)
 	}
-	server, err := api.New(ops, log)
+	catalog := images.NewCatalog()
+	server, err := api.New(ops, catalog, log)
 	if err != nil {
 		log.Error("failed to initialize api", "error", err)
 		os.Exit(1)

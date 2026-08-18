@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"github.com/sudo-su-coffee/firecracker-studio/internal/images"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/operations"
 	"github.com/valyala/fasthttp"
 	"github.com/zerodha/fastglue"
@@ -13,9 +14,12 @@ type Server struct {
 	app *fastglue.Fastglue
 }
 
-func New(ops *operations.Manager, log *slog.Logger) (*Server, error) {
+func New(ops *operations.Manager, catalog *images.Catalog, log *slog.Logger) (*Server, error) {
 	if ops == nil {
 		return nil, fmt.Errorf("operation manager is required")
+	}
+	if catalog == nil {
+		return nil, fmt.Errorf("image catalog is required")
 	}
 	if log == nil {
 		log = slog.Default()
@@ -24,6 +28,8 @@ func New(ops *operations.Manager, log *slog.Logger) (*Server, error) {
 	app.After(requestLogger(log))
 	server := &Server{app: app}
 	app.GET("/api/v1/health", server.health)
+	app.GET("/api/v1/images", server.listImages(catalog))
+	app.POST("/api/v1/images", server.registerImage(catalog))
 	app.POST("/api/v1/conversions", server.enqueueConversion(ops))
 	app.GET("/api/v1/operations", server.listOperations(ops))
 	app.GET("/api/v1/operations/:id", server.getOperation(ops))
@@ -48,6 +54,26 @@ func requestLogger(log *slog.Logger) fastglue.FastMiddleware {
 
 func (s *Server) health(r *fastglue.Request) error {
 	return r.SendJSON(http.StatusOK, map[string]string{"status": "ok", "service": "firecracker-studio"})
+}
+
+func (s *Server) listImages(catalog *images.Catalog) fastglue.FastRequestHandler {
+	return func(r *fastglue.Request) error {
+		return r.SendJSON(http.StatusOK, map[string]any{"images": catalog.List()})
+	}
+}
+
+func (s *Server) registerImage(catalog *images.Catalog) fastglue.FastRequestHandler {
+	return func(r *fastglue.Request) error {
+		var image images.Image
+		if err := r.Decode(&image, "json"); err != nil {
+			return r.SendJSON(http.StatusBadRequest, map[string]string{"error": "invalid_request", "message": err.Error()})
+		}
+		stored, err := catalog.Upsert(image)
+		if err != nil {
+			return r.SendJSON(http.StatusBadRequest, map[string]string{"error": "invalid_image", "message": err.Error()})
+		}
+		return r.SendJSON(http.StatusCreated, stored)
+	}
 }
 
 func (s *Server) enqueueConversion(ops *operations.Manager) fastglue.FastRequestHandler {
