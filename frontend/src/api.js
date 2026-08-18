@@ -23,11 +23,34 @@ const webRequest = async (path, options = {}) => {
 }
 const call = (_name, webFallback) => (...args) => webFallback(...args)
 
+const localServer = () => ({
+  id: 'local-current-server',
+  name: 'This Firecracker Studio server',
+  url: window.location.origin,
+  kind: 'local',
+  health: 'healthy',
+  active: true,
+  managed: true,
+  lastChecked: new Date().toISOString(),
+})
 const storedServers = () => {
-  try { return JSON.parse(localStorage.getItem('firecracker-studio.servers') || '[]') } catch { return [] }
+  try {
+    const value = JSON.parse(localStorage.getItem('firecracker-studio.servers') || '[]')
+    return Array.isArray(value) ? value : []
+  } catch { return [] }
 }
 const saveServers = (servers) => localStorage.setItem('firecracker-studio.servers', JSON.stringify(servers))
-const webServers = () => storedServers()
+const webServers = () => {
+  const current = localServer()
+  const stored = storedServers()
+  const existing = stored.find((entry) => entry.id === current.id)
+  const local = { ...current, ...(existing || {}), url: current.url, health: 'healthy', managed: true, active: existing ? existing.active : true }
+  const remote = stored.filter((entry) => entry.id !== current.id)
+  if (!remote.some((entry) => entry.active) && !local.active) local.active = true
+  const servers = [local, ...remote]
+  saveServers(servers)
+  return servers
+}
 
 export const Servers = call('Servers', async () => webServers())
 export const AddServer = call('AddServer', async (server) => {
@@ -48,7 +71,10 @@ export const CheckServer = call('CheckServer', async (id) => {
   if (!response.ok) throw new Error(`health check returned HTTP ${response.status}`)
   return updated
 })
-export const RemoveServer = call('RemoveServer', async (id) => saveServers(webServers().filter((entry) => entry.id !== id)))
+export const RemoveServer = call('RemoveServer', async (id) => {
+  if (id === 'local-current-server') throw new Error('the current Firecracker Studio server cannot be removed')
+  return saveServers(webServers().filter((entry) => entry.id !== id))
+})
 export const SwitchServer = call('SwitchServer', async (id) => {
   const servers = webServers().map((entry) => ({ ...entry, active: entry.id === id }))
   saveServers(servers)
