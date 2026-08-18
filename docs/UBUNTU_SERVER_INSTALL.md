@@ -36,7 +36,16 @@ The runtime installer does not install the Go server or Vue UI.
 
 ## Command 2: install the Go backend and web UI
 
-The server installer installs Go and Node build tools, obtains the Firecracker Studio source, builds the Vue production assets, embeds them into one Go binary, installs the binary, and starts a systemd service when systemd is available.
+The server installer downloads a prebuilt Linux AMD64 Firecracker Studio binary from GitHub Releases, verifies its SHA256 checksum, installs the binary, and starts a systemd service when systemd is available. It does not clone the repository and does not install Go, Node.js, npm, or frontend build dependencies.
+
+The selected release must contain these Linux assets:
+
+```text
+FirecrackerStudio-linux-amd64
+SHA256SUMS-linux-amd64.txt
+```
+
+If the selected release does not contain a Linux asset, the installer stops instead of compiling locally. Run the release workflow with `publish: true` before installing a new version.
 
 For an authenticated private repository:
 
@@ -55,7 +64,6 @@ The server installer uses these defaults:
 | Setting | Default |
 |---|---|
 | Binary | `/usr/local/bin/firecracker-studio` |
-| Source checkout | `~/src/firecracker-studio` |
 | Install directory | `/opt/firecracker-studio` |
 | Listen address | `127.0.0.1:7822` |
 | Service | `firecracker-studio.service` |
@@ -95,20 +103,12 @@ The server installer does not install Firecracker, jailer, kernels, rootfs image
 
 ## Updating only one layer
 
-Update the web server without changing Firecracker:
+Update the web server without changing Firecracker by selecting a published release version:
 
 ```bash
-sudo systemctl stop firecracker-studio
-cd ~/src/firecracker-studio
-git pull --ff-only
-npm ci --prefix frontend
-npm run build --prefix frontend
-rm -rf internal/web/dist
-mkdir -p internal/web/dist
-cp -R frontend/dist/. internal/web/dist/
-go build -trimpath -ldflags '-s -w' -o /tmp/firecracker-studio ./cmd/firecracker-studio
-sudo install -m 0755 /tmp/firecracker-studio /usr/local/bin/firecracker-studio
-sudo systemctl start firecracker-studio
+FIRECRACKER_STUDIO_VERSION=v1.0.3 \
+gh api repos/sudo-su-coffee/firecracker-studio/contents/scripts/install-server.sh \
+  -H 'Accept: application/vnd.github.raw' | bash
 ```
 
-Update the Firecracker runtime separately by rerunning `scripts/install-runtime.sh` with the desired pinned `FIRECRACKER_VERSION`.
+If `FIRECRACKER_STUDIO_VERSION` is omitted, the installer resolves the latest GitHub Release. Update the Firecracker runtime separately by rerunning `scripts/install-runtime.sh` with the desired pinned `FIRECRACKER_VERSION`.

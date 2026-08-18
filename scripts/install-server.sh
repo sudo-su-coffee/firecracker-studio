@@ -1,64 +1,66 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Firecracker Studio unattended Go web-server installer.
-# This script installs only the Go backend and embedded Vue web UI.
-# Firecracker/jailer/KVM artifacts are intentionally handled by install-runtime.sh.
+# Firecracker Studio unattended server installer.
+# This script installs only a prebuilt Go server binary from GitHub Releases.
+# Firecracker/jailer/KVM artifacts are handled separately by install-runtime.sh.
 
-VERSION="${FIRECRACKER_STUDIO_VERSION:-main}"
-APP_NAME="firecracker-studio"
+REPO="${FIRECRACKER_STUDIO_REPO:-sudo-su-coffee/firecracker-studio}"
+VERSION="${FIRECRACKER_STUDIO_VERSION:-latest}"
 INSTALL_DIR="${FIRECRACKER_STUDIO_INSTALL_DIR:-/opt/firecracker-studio}"
 BIN_PATH="${FIRECRACKER_STUDIO_BIN:-/usr/local/bin/firecracker-studio}"
-SOURCE_DIR="${FIRECRACKER_STUDIO_SOURCE_DIR:-$HOME/src/firecracker-studio}"
 LISTEN_ADDRESS="${FIRECRACKER_STUDIO_LISTEN:-127.0.0.1:7822}"
-REPO="${FIRECRACKER_STUDIO_REPO:-https://github.com/sudo-su-coffee/firecracker-studio.git}"
+ASSET_NAME="FirecrackerStudio-linux-amd64"
+CHECKSUM_NAME="SHA256SUMS-linux-amd64.txt"
 
 log() { printf '[firecracker-studio] %s\n' "$*"; }
 fatal() { printf '[firecracker-studio] ERROR: %s\n' "$*" >&2; exit 1; }
 
 [ "$(id -u)" -ne 0 ] || fatal "run this script as your normal Linux user; it uses sudo for system installation"
 command -v sudo >/dev/null 2>&1 || fatal "sudo is required"
+command -v sha256sum >/dev/null 2>&1 || fatal "sha256sum is required"
 
 if command -v apt-get >/dev/null 2>&1; then
-  log "Installing Go web-server build utilities"
+  log "Installing server runtime utilities"
   sudo apt-get update -y
-  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates git golang-go nodejs npm
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl coreutils
 else
   fatal "apt-get is required for this Ubuntu installer"
 fi
 
-if [ ! -d "$SOURCE_DIR/.git" ]; then
-  mkdir -p "$(dirname "$SOURCE_DIR")"
+if [ "$VERSION" = "latest" ]; then
   if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-    log "Cloning Firecracker Studio source with GitHub CLI"
-    rm -rf "$SOURCE_DIR"
-    gh repo clone sudo-su-coffee/firecracker-studio "$SOURCE_DIR" -- --branch "$VERSION"
-  elif [ -n "${GITHUB_TOKEN:-}" ]; then
-    log "Cloning Firecracker Studio source with GITHUB_TOKEN"
-    rm -rf "$SOURCE_DIR"
-    git clone --branch "$VERSION" "https://x-access-token:${GITHUB_TOKEN}@github.com/sudo-su-coffee/firecracker-studio.git" "$SOURCE_DIR"
+    VERSION="$(gh release view --repo "$REPO" --json tagName --jq '.tagName')"
   else
-    fatal "source directory is missing; clone the private repository first with gh auth login, or set GITHUB_TOKEN"
+    VERSION="$(curl -fsSL -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/${REPO}/releases/latest" | sed -n 's/.*"tag_name": "\([^"]*\)".*/\1/p' | head -n 1)"
   fi
 fi
+[ -n "$VERSION" ] || fatal "could not determine a GitHub release version"
 
-cd "$SOURCE_DIR"
-log "Building Vue production assets"
-npm ci --prefix frontend
-npm run build --prefix frontend
-rm -rf internal/web/dist
-mkdir -p internal/web/dist
-cp -R frontend/dist/. internal/web/dist/
+work_dir="$(mktemp -d)"
+trap 'rm -rf "$work_dir"' EXIT
 
-log "Building the single Go web binary"
-tmp_binary="$(mktemp)"
-trap 'rm -f "$tmp_binary"' EXIT
-go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o "$tmp_binary" ./cmd/firecracker-studio
+if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+  log "Downloading Firecracker Studio release $VERSION with GitHub CLI"
+  gh release download "$VERSION" --repo "$REPO" --pattern "$ASSET_NAME" --pattern "$CHECKSUM_NAME" --dir "$work_dir" --clobber
+else
+  log "Downloading Firecracker Studio release $VERSION"
+  base_url="https://github.com/${REPO}/releases/download/${VERSION}"
+  curl -fsSL --retry 3 -o "$work_dir/$ASSET_NAME" "$base_url/$ASSET_NAME"
+  curl -fsSL --retry 3 -o "$work_dir/$CHECKSUM_NAME" "$base_url/$CHECKSUM_NAME"
+fi
 
-sudo install -d -m 0755 "$INSTALL_DIR"
-sudo install -m 0755 "$tmp_binary" "$BIN_PATH"
-sudo install -d -m 0755 "$INSTALL_DIR/state"
-sudo install -d -m 0755 "$INSTALL_DIR/logs"
+[ -s "$work_dir/$ASSET_NAME" ] || fatal "release asset $ASSET_NAME was not downloaded"
+[ -s "$work_dir/$CHECKSUM_NAME" ] || fatal "release checksum $CHECKSUM_NAME was not downloaded"
+
+log "Verifying release checksum"
+(
+  cd "$work_dir"
+  sha256sum -c "$CHECKSUM_NAME" --ignore-missing
+)
+
+sudo install -d -m 0755 "$INSTALL_DIR" "$INSTALL_DIR/state" "$INSTALL_DIR/logs"
+sudo install -m 0755 "$work_dir/$ASSET_NAME" "$BIN_PATH"
 
 if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
   SERVICE_USER="$USER"
@@ -90,6 +92,7 @@ else
   log "systemd is unavailable; start manually with: FIRECRACKER_STUDIO_LISTEN=${LISTEN_ADDRESS} ${BIN_PATH}"
 fi
 
+log "Installed release: $VERSION"
 log "Server binary: $BIN_PATH"
 log "Listen address: $LISTEN_ADDRESS"
 log "Open the UI at: http://127.0.0.1:${LISTEN_ADDRESS##*:}"

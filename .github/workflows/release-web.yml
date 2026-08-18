@@ -20,6 +20,7 @@ jobs:
   build:
     name: Build embedded Go web binaries
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     strategy:
       matrix:
         include:
@@ -68,14 +69,23 @@ jobs:
           path: |
             FirecrackerStudio-${{ matrix.suffix }}*
             SHA256SUMS-${{ matrix.suffix }}.txt
-      - name: Publish release assets
-        if: ${{ inputs.publish }}
-        uses: softprops/action-gh-release@v2
+
+  publish:
+    name: Publish release assets
+    if: ${{ inputs.publish }}
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: firecracker-studio-${{ inputs.version }}-*
+          path: release-assets
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.version }}
           name: Firecracker Studio ${{ inputs.version }}
           generate_release_notes: true
           prerelease: false
-          files: |
-            FirecrackerStudio-${{ matrix.suffix }}*
-            SHA256SUMS-${{ matrix.suffix }}.txt
+          files: release-assets/*

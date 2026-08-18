@@ -50,7 +50,7 @@ For a public repository:
 curl -fsSL https://raw.githubusercontent.com/sudo-su-coffee/firecracker-studio/main/scripts/install-server.sh | bash
 ```
 
-The server listens on `127.0.0.1:7822` by default. For the full Ubuntu/systemd flow, remote binding guidance, updates, and verification, see [`docs/UBUNTU_SERVER_INSTALL.md`](docs/UBUNTU_SERVER_INSTALL.md).
+The server installer downloads and verifies the published `FirecrackerStudio-linux-amd64` release binary. It does not clone the repository or build Go/Vue locally. The server listens on `127.0.0.1:7822` by default. For the full Ubuntu/systemd flow, release asset requirements, remote binding guidance, updates, and verification, see [`docs/UBUNTU_SERVER_INSTALL.md`](docs/UBUNTU_SERVER_INSTALL.md).
 
 ### Run locally from a checkout
 

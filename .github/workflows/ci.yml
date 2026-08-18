@@ -58,7 +58,23 @@ jobs:
       - name: Copy Vue assets into Go embed directory
         run: rm -rf internal/web/dist && mkdir -p internal/web/dist && cp -R frontend/dist/. internal/web/dist/
       - run: go build -trimpath -ldflags "-s -w" -o firecracker-studio-linux-amd64 ./cmd/firecracker-studio
-      - run: ./firecracker-studio-linux-amd64 --help >/dev/null 2>&1 || true
+      - name: Smoke-test embedded web server
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          FIRECRACKER_STUDIO_LISTEN=127.0.0.1:17822 ./firecracker-studio-linux-amd64 >server.log 2>&1 &
+          pid=$!
+          cleanup() { kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; }
+          trap cleanup EXIT
+          for attempt in {1..20}; do
+            if curl --fail --silent --show-error http://127.0.0.1:17822/api/v1/health; then
+              echo
+              exit 0
+            fi
+            sleep 0.25
+          done
+          cat server.log
+          exit 1
       - uses: actions/upload-artifact@v4
         with:
           name: firecracker-studio-linux-amd64
