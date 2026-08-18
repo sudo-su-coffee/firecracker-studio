@@ -105,27 +105,27 @@ func (a *App) Connection() map[string]string {
 
 func (a *App) Health() (map[string]any, error) {
 	var out map[string]any
-	return out, a.request(http.MethodGet, "/api/v1/health", nil, &out)
+	return out, a.request(http.MethodGet, "/health", nil, &out)
 }
 
 func (a *App) BaseImages() (map[string]any, error) {
 	var out map[string]any
-	return out, a.request(http.MethodGet, "/api/v1/base-images", nil, &out)
+	return out, a.request(http.MethodGet, "/images/base", nil, &out)
 }
 
 func (a *App) Images() (map[string]any, error) {
 	var out map[string]any
-	return out, a.request(http.MethodGet, "/api/v1/images", nil, &out)
+	return out, a.request(http.MethodGet, "/images", nil, &out)
 }
 
 func (a *App) Operations() (map[string]any, error) {
 	var out map[string]any
-	return out, a.request(http.MethodGet, "/api/v1/operations", nil, &out)
+	return out, a.request(http.MethodGet, "/overview", nil, &out)
 }
 
 func (a *App) VMs() (map[string]any, error) {
 	var out map[string]any
-	return out, a.request(http.MethodGet, "/api/v1/vms", nil, &out)
+	return out, a.request(http.MethodGet, "/vms", nil, &out)
 }
 
 func (a *App) Convert(source, sourceType, baseProfile string) (map[string]any, error) {
@@ -162,7 +162,7 @@ func (a *App) Snapshot(id, action, snapshotPath, memoryPath string) (map[string]
 }
 
 func (a *App) checkURL(baseURL, bearer string) (string, error) {
-	req, err := http.NewRequestWithContext(a.contextOrBackground(), http.MethodGet, strings.TrimRight(baseURL, "/")+"/api/v1/health", nil)
+	req, err := http.NewRequestWithContext(a.contextOrBackground(), http.MethodGet, strings.TrimRight(baseURL, "/")+"/health", nil)
 	if err != nil {
 		return "", err
 	}

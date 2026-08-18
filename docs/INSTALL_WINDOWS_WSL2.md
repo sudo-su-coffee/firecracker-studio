@@ -55,12 +55,18 @@ The user is responsible for WSL installation, the Windows restart, BIOS/UEFI vir
 
 Inside Ubuntu, run:
 
+Porter’s default control-plane URL is `http://127.0.0.1:8080`. The Studio connector checks `GET /health`, not `/api/v1/health`.
+
 ```bash
 sudo apt-get update
 sudo apt-get install -y curl ca-certificates iproute2 iptables util-linux acl e2fsprogs
 
 command -v firecracker || echo 'Firecracker binary is missing'
 command -v jailer || echo 'jailer binary is missing'
+
+# Porter source checkout: install the pinned official Firecracker binary and jailer
+cd ~/porter
+sudo bash scripts/backend/install-firecracker.sh v1.16.1 "$(uname -m)"
 ls -l /dev/kvm || true
 [ -r /dev/kvm ] && [ -w /dev/kvm ] && echo 'KVM access: OK' || echo 'KVM access: FAIL'
 ip link show
@@ -80,19 +86,43 @@ curl -fsSL https://raw.githubusercontent.com/sudo-su-coffee/firecracker-studio/m
 
 This command is not active until `scripts/install-linux.sh` is committed and the repository’s release policy has been finalized. Until then, use the repository’s Linux build workflow and install the official Firecracker artifacts through the Studio catalog.
 
+## Username, password, token, and URL
+
+For the default local Porter installation, use:
+
+| Field | Value |
+|---|---|
+| Worker URL | `http://127.0.0.1:8080` |
+| Health check | `GET http://127.0.0.1:8080/health` |
+| Username | `admin` for the bootstrap administrator |
+| Password | The one-time password printed by Porter’s installer and stored in `/var/porter/porter.env` |
+| Bearer token | The token returned by `POST /auth/login` |
+
+Firecracker Studio does not need the password for ordinary API requests. Log in to Porter once, copy the returned token, and paste that token into Studio’s **Bearer token** field. The username is currently a descriptive label in the server profile; the token is what authenticates API requests.
+
+To obtain a token manually inside WSL2, replace the password value with the password from `/var/porter/porter.env`:
+
+```bash
+curl -fsS -X POST http://127.0.0.1:8080/auth/login \\
+  -H 'Content-Type: application/json' \\
+  -d '{"username":"admin","password":"REPLACE_WITH_BOOTSTRAP_PASSWORD"}'
+```
+
+The response contains a `token` field. Paste that value into **Bearer token**. For a remote worker, use its reachable HTTPS URL, for example `https://worker.example.com`, and use the remote Porter administrator or API token. Do not expose an unauthenticated Porter server to the public internet.
+
 ## Recommended first-run flow
 
 1. Install and launch WSL2 Ubuntu manually on Windows, or prepare native Linux.
 2. Install Firecracker and `jailer`, prepare KVM/TAP access, and start the Porter worker manually.
 3. Install and launch Firecracker Studio.
-4. Open **Servers → Add server**, select **Local**, and enter the worker URL, normally `http://127.0.0.1:7822` when the worker is listening inside the same reachable environment.
-5. Select **Check health and add**. Studio switches to the worker only after a successful health response.
+4. Open **Servers → Add server**, select **Local**, and enter the Porter URL. Porter listens on `http://127.0.0.1:8080` by default, and its public health endpoint is `/health`.
+5. Select **Check health and add**. Studio switches to the worker only after `GET /health` succeeds.
 6. Import a Docker/OCI image or open a Compose file.
 7. Studio sends conversion and lifecycle requests to the selected worker; the worker builds artifacts through BuildKit and starts isolated Firecracker microVMs.
 
 ## Important distinction
 
-The `.exe` is the desktop control plane. It does not turn Windows itself into a Firecracker host. On Windows, Firecracker runs inside the Linux environment provided by WSL2. On native Linux, the application can connect directly to the local worker. Remote Linux workers can be added through the server manager after their authenticated health endpoint is available.
+The `.exe` is the desktop control plane. It does not turn Windows itself into a Firecracker host. On Windows, Firecracker runs inside WSL2, while the Studio app connects to Porter over its HTTP URL. For the default local Porter setup, use `http://127.0.0.1:8080`; for a remote worker, use the worker’s HTTPS URL and bearer token. Remote Linux workers can be added through the server manager after their authenticated health endpoint is available.
 
 ## References
 
