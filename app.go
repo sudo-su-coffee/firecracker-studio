@@ -8,21 +8,98 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/sudo-su-coffee/firecracker-studio/internal/connections"
 )
 
 type App struct {
-	ctx     context.Context
-	baseURL string
-	http    *http.Client
-	bearer  string
+	ctx      context.Context
+	baseURL  string
+	http     *http.Client
+	bearer   string
+	accounts []connections.Account
+	servers  []connections.Server
 }
 
 func NewApp() *App {
-	return &App{baseURL: "http://127.0.0.1:7822", http: &http.Client{Timeout: 30 * time.Second}}
+	account := connections.Account{ID: uuid.NewString(), Name: "Personal", Username: "local"}
+	server := connections.Server{ID: uuid.NewString(), Name: "Local worker", URL: "http://127.0.0.1:7822", Kind: "local", Health: "unchecked", Active: true}
+	return &App{baseURL: server.URL, http: &http.Client{Timeout: 30 * time.Second}, accounts: []connections.Account{account}, servers: []connections.Server{server}}
 }
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+}
+
+func (a *App) Accounts() []connections.Account {
+	return append([]connections.Account(nil), a.accounts...)
+}
+
+func (a *App) Servers() []connections.Server { return append([]connections.Server(nil), a.servers...) }
+
+func (a *App) AddAccount(name, username string) connections.Account {
+	account := connections.Account{ID: uuid.NewString(), Name: name, Username: username}
+	a.accounts = append(a.accounts, account)
+	return account
+}
+
+func (a *App) AddServer(name, baseURL, kind, username, bearer string) (connections.Server, error) {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if baseURL == "" {
+		return connections.Server{}, fmt.Errorf("worker URL is required")
+	}
+	server := connections.Server{ID: uuid.NewString(), Name: name, URL: baseURL, Kind: kind, Username: username, Health: "unchecked"}
+	a.servers = append(a.servers, server)
+	if _, err := a.checkURL(baseURL, bearer); err != nil {
+		server.Health = "unhealthy"
+	} else {
+		server.Health = "healthy"
+	}
+	now := time.Now().UTC()
+	server.LastChecked = &now
+	for i := range a.servers {
+		if a.servers[i].ID == server.ID {
+			a.servers[i] = server
+		}
+	}
+	return server, nil
+}
+
+func (a *App) CheckServer(id string) (connections.Server, error) {
+	for i := range a.servers {
+		if a.servers[i].ID == id {
+			status, err := a.checkURL(a.servers[i].URL, a.bearer)
+			now := time.Now().UTC()
+			a.servers[i].LastChecked = &now
+			if err != nil {
+				a.servers[i].Health = "unhealthy"
+			} else {
+				a.servers[i].Health = status
+			}
+			return a.servers[i], err
+		}
+	}
+	return connections.Server{}, fmt.Errorf("server %q not found", id)
+}
+
+func (a *App) SwitchServer(id string) (connections.Server, error) {
+	for i := range a.servers {
+		if a.servers[i].ID == id {
+			if a.servers[i].Health != "healthy" {
+				if _, err := a.CheckServer(id); err != nil {
+					return connections.Server{}, fmt.Errorf("server health check failed: %w", err)
+				}
+			}
+			a.baseURL = a.servers[i].URL
+			a.bearer = ""
+			for j := range a.servers {
+				a.servers[j].Active = j == i
+			}
+			return a.servers[i], nil
+		}
+	}
+	return connections.Server{}, fmt.Errorf("server %q not found", id)
 }
 
 func (a *App) SetConnection(baseURL, bearer string) error {
@@ -95,6 +172,25 @@ func (a *App) Snapshot(id, action, snapshotPath, memoryPath string) (map[string]
 	}
 	body := map[string]string{"snapshotPath": snapshotPath, "memoryPath": memoryPath}
 	return out, a.request(http.MethodPost, path, body, &out)
+}
+
+func (a *App) checkURL(baseURL, bearer string) (string, error) {
+	req, err := http.NewRequestWithContext(a.contextOrBackground(), http.MethodGet, strings.TrimRight(baseURL, "/")+"/api/v1/health", nil)
+	if err != nil {
+		return "", err
+	}
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
+	resp, err := a.http.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("health check returned HTTP %d", resp.StatusCode)
+	}
+	return "healthy", nil
 }
 
 func (a *App) request(method, path string, body any, out any) error {

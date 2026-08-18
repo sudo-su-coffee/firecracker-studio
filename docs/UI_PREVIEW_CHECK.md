@@ -17,3 +17,11 @@ This preview confirms the UI composition only. Native Wails execution and Firecr
 The redesigned preview at `http://127.0.0.1:4173` now renders as a Wails/Vue desktop-style control center with navigation for Overview, MicroVMs, Images, Marketplace, Live logs, Terminal, File manager, SSH & access, Snapshots, and Settings. The overview shows worker connection, Firecracker readiness checks, image conversion, workload metrics, and recent microVMs. The browser-safe adapter reports a preview worker state and displays the six managed catalog profiles without requiring native Wails bindings.
 
 Redesigned screenshot: `/home/ubuntu/screenshots/127_0_0_1_2026-08-18_06-17-58_9668.webp`
+
+## Four-tab Docker Desktop-style inspection
+
+The final preview at `http://127.0.0.1:4173` shows exactly four primary sidebar areas: Dashboard, Images, Containers / MicroVMs, and Convert / Build. Account switching and `+ Account` are visible in the top bar. The local/remote server selector and `+ Server` action are also visible in the top bar. The server connection dialog performs a health check before adding a worker profile and supports local or remote type, URL, username, and bearer token fields.
+
+Four-tab screenshot: `/home/ubuntu/screenshots/127_0_0_1_2026-08-18_06-22-36_9020.webp`
+
+Advanced operations such as terminal, logs, file management, SSH, snapshots, and restore are now intended to live inside the selected microVM detail view rather than as primary navigation tabs. The current UI still contains legacy unreachable templates for those views and they should be consolidated into the microVM detail panel in the next cleanup pass.
