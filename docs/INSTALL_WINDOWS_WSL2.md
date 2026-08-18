@@ -2,7 +2,7 @@
 
 ## Current release status
 
-The repository currently has a manual Windows release workflow, but no GitHub Release has been published yet. Therefore there is not yet a real public one-line download command. The Windows installer is produced by the manual `Windows Release` workflow as an NSIS `.exe` artifact.
+Windows v1.0.0 has been published as a GitHub Release. The release contains the NSIS installer, the standalone executable, and SHA256 checksums.
 
 ## Windows developer/build command
 
@@ -15,13 +15,13 @@ wails build -clean -platform windows/amd64 -nsis -ldflags "-X main.version=v0.1.
 
 The generated installer is placed in `build/bin`. Wails uses NSIS to create the installer, and the application itself is a desktop executable rather than a web application.
 
-For a release from GitHub Actions, open **Actions → Windows Release → Run workflow**, enter a version such as `v0.1.0`, and start the workflow. Once the release workflow is wired to publish a release, the end-user command will be:
+For a release from GitHub Actions, open **Actions → Windows Release → Run workflow**, enter a version such as `v0.1.0`, and start the workflow. The current end-user command is:
 
 ```powershell
 irm https://github.com/sudo-su-coffee/firecracker-studio/releases/latest/download/FirecrackerStudioInstaller.exe -OutFile "$env:TEMP\FirecrackerStudioInstaller.exe"; Start-Process "$env:TEMP\FirecrackerStudioInstaller.exe"
 ```
 
-That URL must not be advertised until the first GitHub Release has actually been published and the asset name has been verified.
+The published v1.0.0 assets are available from the [GitHub release page](https://github.com/sudo-su-coffee/firecracker-studio/releases/tag/v1.0.0). The SHA256 file should be downloaded and checked before distributing the installer through another channel.
 
 ## End-user Windows requirements
 
