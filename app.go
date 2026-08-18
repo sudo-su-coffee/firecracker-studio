@@ -14,35 +14,23 @@ import (
 )
 
 type App struct {
-	ctx      context.Context
-	baseURL  string
-	http     *http.Client
-	bearer   string
-	accounts []connections.Account
-	servers  []connections.Server
+	ctx     context.Context
+	baseURL string
+	http    *http.Client
+	bearer  string
+	servers []connections.Server
 }
 
 func NewApp() *App {
-	account := connections.Account{ID: uuid.NewString(), Name: "Personal", Username: "local"}
 	server := connections.Server{ID: uuid.NewString(), Name: "Local worker", URL: "http://127.0.0.1:7822", Kind: "local", Health: "unchecked", Active: true}
-	return &App{baseURL: server.URL, http: &http.Client{Timeout: 30 * time.Second}, accounts: []connections.Account{account}, servers: []connections.Server{server}}
+	return &App{baseURL: server.URL, http: &http.Client{Timeout: 30 * time.Second}, servers: []connections.Server{server}}
 }
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 }
 
-func (a *App) Accounts() []connections.Account {
-	return append([]connections.Account(nil), a.accounts...)
-}
-
 func (a *App) Servers() []connections.Server { return append([]connections.Server(nil), a.servers...) }
-
-func (a *App) AddAccount(name, username string) connections.Account {
-	account := connections.Account{ID: uuid.NewString(), Name: name, Username: username}
-	a.accounts = append(a.accounts, account)
-	return account
-}
 
 func (a *App) AddServer(name, baseURL, kind, username, bearer string) (connections.Server, error) {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")

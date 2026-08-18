@@ -1,21 +1,5 @@
 export namespace connections {
 	
-	export class Account {
-	    id: string;
-	    name: string;
-	    username: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new Account(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.name = source["name"];
-	        this.username = source["username"];
-	    }
-	}
 	export class Server {
 	    id: string;
 	    name: string;
