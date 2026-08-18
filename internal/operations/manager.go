@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sort"
 	"sync"
 	"time"
 
@@ -108,6 +109,11 @@ func (m *Manager) Enqueue(ctx context.Context, req Request) (Operation, error) {
 	if req.SourceType == "" {
 		req.SourceType = "oci"
 	}
+	switch req.SourceType {
+	case "oci", "docker", "dockerfile", "archive":
+	default:
+		return Operation{}, fmt.Errorf("unsupported source type %q", req.SourceType)
+	}
 	if req.Architecture == "" {
 		req.Architecture = "native"
 	}
@@ -134,6 +140,17 @@ func (m *Manager) Enqueue(ctx context.Context, req Request) (Operation, error) {
 	return op, nil
 }
 
+func (m *Manager) List() []Operation {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	items := make([]Operation, 0, len(m.operations))
+	for _, op := range m.operations {
+		items = append(items, op)
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].CreatedAt.Before(items[j].CreatedAt) })
+	return items
+}
+
 func (m *Manager) Get(id string) (Operation, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -141,13 +158,13 @@ func (m *Manager) Get(id string) (Operation, bool) {
 	return op, ok
 }
 
-func (m *Manager) handleConversion(raw []byte, _ tasqueue.JobCtx) error {
+func (m *Manager) handleConversion(raw []byte, jobCtx tasqueue.JobCtx) error {
 	var p payload
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return err
 	}
 	m.update(p.OperationID, func(op *Operation) { op.State = StateRunning })
-	artifact, err := m.converter.Convert(context.Background(), p.Request)
+	artifact, err := m.converter.Convert(jobCtx, p.Request)
 	if err != nil {
 		m.update(p.OperationID, func(op *Operation) { op.State = StateFailed; op.Error = err.Error() })
 		return err

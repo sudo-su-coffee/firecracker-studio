@@ -25,6 +25,7 @@ func New(ops *operations.Manager, log *slog.Logger) (*Server, error) {
 	server := &Server{app: app}
 	app.GET("/api/v1/health", server.health)
 	app.POST("/api/v1/conversions", server.enqueueConversion(ops))
+	app.GET("/api/v1/operations", server.listOperations(ops))
 	app.GET("/api/v1/operations/:id", server.getOperation(ops))
 	app.NotFound(func(r *fastglue.Request) error {
 		return r.SendJSON(http.StatusNotFound, map[string]string{"error": "not_found"})
@@ -60,6 +61,12 @@ func (s *Server) enqueueConversion(ops *operations.Manager) fastglue.FastRequest
 			return r.SendJSON(http.StatusBadRequest, map[string]string{"error": "enqueue_failed", "message": err.Error()})
 		}
 		return r.SendJSON(http.StatusAccepted, op)
+	}
+}
+
+func (s *Server) listOperations(ops *operations.Manager) fastglue.FastRequestHandler {
+	return func(r *fastglue.Request) error {
+		return r.SendJSON(http.StatusOK, map[string]any{"operations": ops.List()})
 	}
 }
 
