@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/images"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/operations"
+	"github.com/sudo-su-coffee/firecracker-studio/internal/worker"
 	"github.com/valyala/fasthttp"
 	"github.com/zerodha/fastglue"
 	"log/slog"
@@ -14,12 +15,15 @@ type Server struct {
 	app *fastglue.Fastglue
 }
 
-func New(ops *operations.Manager, catalog *images.Catalog, log *slog.Logger) (*Server, error) {
+func New(ops *operations.Manager, catalog *images.Catalog, workers *worker.Service, log *slog.Logger) (*Server, error) {
 	if ops == nil {
 		return nil, fmt.Errorf("operation manager is required")
 	}
 	if catalog == nil {
 		return nil, fmt.Errorf("image catalog is required")
+	}
+	if workers == nil {
+		return nil, fmt.Errorf("worker service is required")
 	}
 	if log == nil {
 		log = slog.Default()
@@ -32,6 +36,10 @@ func New(ops *operations.Manager, catalog *images.Catalog, log *slog.Logger) (*S
 	app.POST("/api/v1/images", server.registerImage(catalog))
 	app.POST("/api/v1/conversions", server.enqueueConversion(ops))
 	app.GET("/api/v1/operations", server.listOperations(ops))
+	app.GET("/api/v1/vms", server.listVMs(workers))
+	app.POST("/api/v1/vms", server.createVM(workers))
+	app.POST("/api/v1/vms/:id/start", server.startVM(workers))
+	app.POST("/api/v1/vms/:id/stop", server.stopVM(workers))
 	app.GET("/api/v1/operations/:id", server.getOperation(ops))
 	app.NotFound(func(r *fastglue.Request) error {
 		return r.SendJSON(http.StatusNotFound, map[string]string{"error": "not_found"})
@@ -87,6 +95,54 @@ func (s *Server) enqueueConversion(ops *operations.Manager) fastglue.FastRequest
 			return r.SendJSON(http.StatusBadRequest, map[string]string{"error": "enqueue_failed", "message": err.Error()})
 		}
 		return r.SendJSON(http.StatusAccepted, op)
+	}
+}
+
+func (s *Server) listVMs(service *worker.Service) fastglue.FastRequestHandler {
+	return func(r *fastglue.Request) error {
+		return r.SendJSON(http.StatusOK, map[string]any{"vms": service.List()})
+	}
+}
+
+func (s *Server) createVM(service *worker.Service) fastglue.FastRequestHandler {
+	return func(r *fastglue.Request) error {
+		var req worker.VMRequest
+		if err := r.Decode(&req, "json"); err != nil {
+			return r.SendJSON(http.StatusBadRequest, map[string]string{"error": "invalid_request", "message": err.Error()})
+		}
+		vm, err := service.Create(r.RequestCtx, req)
+		if err != nil {
+			return r.SendJSON(http.StatusBadRequest, map[string]string{"error": "create_vm_failed", "message": err.Error()})
+		}
+		return r.SendJSON(http.StatusCreated, vm)
+	}
+}
+
+func (s *Server) startVM(service *worker.Service) fastglue.FastRequestHandler {
+	return s.vmAction(service, true)
+}
+
+func (s *Server) stopVM(service *worker.Service) fastglue.FastRequestHandler {
+	return s.vmAction(service, false)
+}
+
+func (s *Server) vmAction(service *worker.Service, start bool) fastglue.FastRequestHandler {
+	return func(r *fastglue.Request) error {
+		id := fmt.Sprint(r.RequestCtx.UserValue("id"))
+		if id == "" || id == "<nil>" {
+			return r.SendJSON(http.StatusBadRequest, map[string]string{"error": "vm_id_required"})
+		}
+		var vm worker.VM
+		var err error
+		if start {
+			vm, err = service.Start(r.RequestCtx, id)
+		} else {
+			vm, err = service.Stop(r.RequestCtx, id)
+		}
+		if err != nil {
+			return r.SendJSON(http.StatusBadRequest, map[string]string{"error": "vm_action_failed", "message": err.Error()})
+		}
+		return r.SendJSON(http.StatusOK, vm)
 	}
 }
 

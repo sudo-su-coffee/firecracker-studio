@@ -12,6 +12,7 @@ import (
 	"github.com/sudo-su-coffee/firecracker-studio/internal/converter"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/images"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/operations"
+	"github.com/sudo-su-coffee/firecracker-studio/internal/worker"
 )
 
 func main() {
@@ -32,7 +33,12 @@ func main() {
 		os.Exit(1)
 	}
 	catalog := images.NewCatalog()
-	server, err := api.New(ops, catalog, log)
+	workerService, err := worker.NewService(worker.DirectorySocketFactory{Dir: cfg.ArtifactDir})
+	if err != nil {
+		log.Error("failed to initialize worker service", "error", err)
+		os.Exit(1)
+	}
+	server, err := api.New(ops, catalog, workerService, log)
 	if err != nil {
 		log.Error("failed to initialize api", "error", err)
 		os.Exit(1)
