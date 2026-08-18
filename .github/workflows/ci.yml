@@ -64,7 +64,15 @@ jobs:
           set -Eeuo pipefail
           FIRECRACKER_STUDIO_LISTEN=127.0.0.1:17822 ./firecracker-studio-linux-amd64 >server.log 2>&1 &
           pid=$!
-          cleanup() { kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; }
+          cleanup() {
+            kill "$pid" 2>/dev/null || true
+            for stop_attempt in {1..10}; do
+              kill -0 "$pid" 2>/dev/null || break
+              sleep 0.2
+            done
+            kill -KILL "$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true
+          }
           trap cleanup EXIT
           for attempt in {1..20}; do
             if curl --connect-timeout 1 --max-time 2 --fail --silent --show-error http://127.0.0.1:17822/api/v1/health; then
