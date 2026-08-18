@@ -28,11 +28,13 @@ else
   fatal "apt-get is required for this Ubuntu installer"
 fi
 
+CURL_OPTS=(--fail --show-error --location --silent --connect-timeout 15 --max-time 600 --retry 3 --retry-delay 2 --retry-all-errors)
 if [ "$VERSION" = "latest" ]; then
+  log "Resolving latest published release"
   if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
     VERSION="$(gh release view --repo "$REPO" --json tagName --jq '.tagName')"
   else
-    VERSION="$(curl -fsSL -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/${REPO}/releases/latest" | sed -n 's/.*"tag_name": "\([^"]*\)".*/\1/p' | head -n 1)"
+    VERSION="$(curl "${CURL_OPTS[@]}" -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/${REPO}/releases/latest" | sed -n 's/.*"tag_name": "\([^"]*\)".*/\1/p' | head -n 1)"
   fi
 fi
 [ -n "$VERSION" ] || fatal "could not determine a GitHub release version"
@@ -40,15 +42,12 @@ fi
 work_dir="$(mktemp -d)"
 trap 'rm -rf "$work_dir"' EXIT
 
-if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-  log "Downloading Firecracker Studio release $VERSION with GitHub CLI"
-  gh release download "$VERSION" --repo "$REPO" --pattern "$ASSET_NAME" --pattern "$CHECKSUM_NAME" --dir "$work_dir" --clobber
-else
-  log "Downloading Firecracker Studio release $VERSION"
-  base_url="https://github.com/${REPO}/releases/download/${VERSION}"
-  curl -fsSL --retry 3 -o "$work_dir/$ASSET_NAME" "$base_url/$ASSET_NAME"
-  curl -fsSL --retry 3 -o "$work_dir/$CHECKSUM_NAME" "$base_url/$CHECKSUM_NAME"
-fi
+log "Downloading Firecracker Studio release $VERSION"
+base_url="https://github.com/${REPO}/releases/download/${VERSION}"
+log "Downloading $ASSET_NAME"
+curl "${CURL_OPTS[@]}" -o "$work_dir/$ASSET_NAME" "$base_url/$ASSET_NAME"
+log "Downloading $CHECKSUM_NAME"
+curl "${CURL_OPTS[@]}" -o "$work_dir/$CHECKSUM_NAME" "$base_url/$CHECKSUM_NAME"
 
 [ -s "$work_dir/$ASSET_NAME" ] || fatal "release asset $ASSET_NAME was not downloaded"
 [ -s "$work_dir/$CHECKSUM_NAME" ] || fatal "release checksum $CHECKSUM_NAME was not downloaded"

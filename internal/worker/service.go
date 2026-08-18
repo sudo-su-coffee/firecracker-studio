@@ -51,7 +51,7 @@ func (s *Service) Create(ctx context.Context, req VMRequest) (VM, error) {
 	}
 	now := time.Now().UTC()
 
-	vm := VM{ID: id, State: "created", ArtifactDigest: req.ArtifactDigest, PortMappings: append([]PortMapping(nil), req.PortMappings...), Logs: []string{"created workload", fmt.Sprintf("artifact %s", req.ArtifactDigest)}, CreatedAt: now, UpdatedAt: now}
+	vm := VM{ID: id, State: "created", ArtifactDigest: req.ArtifactDigest, ImageReference: req.ImageReference, PortMappings: append([]PortMapping(nil), req.PortMappings...), Logs: []string{"created workload", fmt.Sprintf("image %s", displayImage(req.ImageReference, req.ArtifactDigest))}, CreatedAt: now, UpdatedAt: now}
 	s.mu.Lock()
 	s.vms[id] = vm
 	s.clients[id] = client
@@ -154,6 +154,13 @@ func (s *Service) update(id, state string, vm VM) VM {
 	s.vms[id] = vm
 	s.mu.Unlock()
 	return vm
+}
+
+func displayImage(reference, digest string) string {
+	if reference != "" {
+		return reference
+	}
+	return digest
 }
 
 func (s *Service) appendLog(id string, vm VM, message string) VM {

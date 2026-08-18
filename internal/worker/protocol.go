@@ -29,6 +29,7 @@ type Capabilities struct {
 
 type VMRequest struct {
 	ArtifactDigest string        `json:"artifactDigest"`
+	ImageReference string        `json:"imageReference,omitempty"`
 	VCPUs          int           `json:"vcpus"`
 	MemoryMiB      int           `json:"memoryMiB"`
 	PortMappings   []PortMapping `json:"portMappings,omitempty"`
@@ -44,6 +45,7 @@ type VM struct {
 	ID             string        `json:"id"`
 	State          string        `json:"state"`
 	ArtifactDigest string        `json:"artifactDigest"`
+	ImageReference string        `json:"imageReference,omitempty"`
 	PortMappings   []PortMapping `json:"portMappings,omitempty"`
 	Logs           []string      `json:"logs,omitempty"`
 	CreatedAt      time.Time     `json:"createdAt"`

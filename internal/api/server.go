@@ -60,7 +60,7 @@ func New(ops *operations.Manager, catalog *images.Catalog, workers *worker.Servi
 	app.POST("/api/v1/marketplace/images/{id}/pull", server.pullMarketplaceImage)
 	app.GET("/api/v1/images", server.listImages(catalog))
 	app.POST("/api/v1/images", server.registerImage(catalog))
-	app.POST("/api/v1/conversions", server.enqueueConversion(ops))
+	app.POST("/api/v1/conversions", server.enqueueConversion(ops, catalog))
 	app.GET("/api/v1/operations", server.listOperations(ops))
 	app.GET("/api/v1/vms", server.listVMs(workers))
 	app.POST("/api/v1/vms", server.createVM(workers))
@@ -210,7 +210,7 @@ func (s *Server) registerImage(catalog *images.Catalog) fastglue.FastRequestHand
 	}
 }
 
-func (s *Server) enqueueConversion(ops *operations.Manager) fastglue.FastRequestHandler {
+func (s *Server) enqueueConversion(ops *operations.Manager, catalog *images.Catalog) fastglue.FastRequestHandler {
 	return func(r *fastglue.Request) error {
 		var req operations.Request
 		if err := r.Decode(&req, "json"); err != nil {
@@ -220,7 +220,26 @@ func (s *Server) enqueueConversion(ops *operations.Manager) fastglue.FastRequest
 		if err != nil {
 			return r.SendJSON(http.StatusBadRequest, map[string]string{"error": "enqueue_failed", "message": err.Error()})
 		}
+		go s.registerCompletedImage(op.ID, ops, catalog)
 		return r.SendJSON(http.StatusAccepted, op)
+	}
+}
+
+func (s *Server) registerCompletedImage(id string, ops *operations.Manager, catalog *images.Catalog) {
+	deadline := time.Now().Add(30 * time.Minute)
+	for time.Now().Before(deadline) {
+		op, ok := ops.Get(id)
+		if !ok {
+			return
+		}
+		if op.State == operations.StateSucceeded && op.Artifact != nil {
+			_, _ = catalog.Upsert(images.Image{ID: op.Artifact.Digest, Reference: op.Request.Source, SourceType: op.Request.SourceType, Digest: op.Artifact.Digest, Architecture: op.Request.Architecture, BaseProfile: op.Request.BaseProfile, ArtifactPath: op.Artifact.Rootfs, Verified: true})
+			return
+		}
+		if op.State == operations.StateFailed {
+			return
+		}
+		time.Sleep(500 * time.Millisecond)
 	}
 }
 
