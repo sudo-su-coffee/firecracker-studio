@@ -6,6 +6,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strconv"
+	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/sudo-su-coffee/firecracker-studio/internal/images"
@@ -23,16 +28,34 @@ type Server struct {
 	catalog     *images.Catalog
 	workers     *worker.Service
 	marketplace *images.Marketplace
+	eventsMu    sync.RWMutex
+	events      []string
+}
+
+type hostMetrics struct {
+	CPUPercent       float64  `json:"cpuPercent"`
+	MemoryTotalBytes uint64   `json:"memoryTotalBytes"`
+	MemoryUsedBytes  uint64   `json:"memoryUsedBytes"`
+	MemoryPercent    float64  `json:"memoryPercent"`
+	DiskTotalBytes   uint64   `json:"diskTotalBytes"`
+	DiskUsedBytes    uint64   `json:"diskUsedBytes"`
+	DiskPercent      float64  `json:"diskPercent"`
+	NetworkRxBytes   uint64   `json:"networkRxBytes"`
+	NetworkTxBytes   uint64   `json:"networkTxBytes"`
+	GPUAvailable     bool     `json:"gpuAvailable"`
+	GPUUsagePercent  *float64 `json:"gpuUsagePercent"`
+	GPUMessage       string   `json:"gpuMessage"`
 }
 
 type metricsSnapshot struct {
-	Timestamp  time.Time `json:"timestamp"`
-	Workers    int       `json:"workers"`
-	MicroVMs   int       `json:"microvms"`
-	RunningVMs int       `json:"runningVms"`
-	Images     int       `json:"images"`
-	Operations int       `json:"operations"`
-	Healthy    bool      `json:"healthy"`
+	Timestamp  time.Time   `json:"timestamp"`
+	Workers    int         `json:"workers"`
+	MicroVMs   int         `json:"microvms"`
+	RunningVMs int         `json:"runningVms"`
+	Images     int         `json:"images"`
+	Operations int         `json:"operations"`
+	Healthy    bool        `json:"healthy"`
+	Host       hostMetrics `json:"host"`
 }
 
 func New(ops *operations.Manager, catalog *images.Catalog, workers *worker.Service, log *slog.Logger) (*Server, error) {
@@ -49,12 +72,13 @@ func New(ops *operations.Manager, catalog *images.Catalog, workers *worker.Servi
 		log = slog.Default()
 	}
 	app := fastglue.New()
-	app.After(requestLogger(log))
 	base, _ := os.UserConfigDir()
 	runtimeRoot := filepath.Join(base, "FirecrackerStudio", "runtime")
-	server := &Server{app: app, ops: ops, catalog: catalog, workers: workers, marketplace: images.NewMarketplace(runtimeRoot, os.Getenv("FIRECRACKER_STUDIO_MARKETPLACE_URL"))}
+	server := &Server{app: app, ops: ops, catalog: catalog, workers: workers, marketplace: images.NewMarketplace(runtimeRoot, os.Getenv("FIRECRACKER_STUDIO_MARKETPLACE_URL")), events: make([]string, 0, 100)}
+	app.After(server.requestLogger(log))
 	app.GET("/api/v1/health", server.health)
 	app.GET("/api/v1/metrics", server.metrics)
+	app.GET("/api/v1/logs", server.logs)
 	app.GET("/api/v1/base-images", server.listBaseImages)
 	app.GET("/api/v1/marketplace/images", server.listMarketplaceImages)
 	app.POST("/api/v1/marketplace/images/{id}/pull", server.pullMarketplaceImage)
@@ -105,15 +129,31 @@ func (s *Server) ListenAndServe(address string) error {
 	return fasthttp.ListenAndServe(address, s.Handler())
 }
 
-func requestLogger(log *slog.Logger) fastglue.FastMiddleware {
+func (s *Server) requestLogger(log *slog.Logger) fastglue.FastMiddleware {
 	return func(r *fastglue.Request) *fastglue.Request {
-		log.Info("http request", "method", string(r.RequestCtx.Method()), "path", string(r.RequestCtx.Path()))
+		method := string(r.RequestCtx.Method())
+		path := string(r.RequestCtx.Path())
+		message := time.Now().UTC().Format(time.RFC3339) + " " + method + " " + path
+		log.Info("http request", "method", method, "path", path)
+		s.eventsMu.Lock()
+		s.events = append(s.events, message)
+		if len(s.events) > 100 {
+			s.events = s.events[len(s.events)-100:]
+		}
+		s.eventsMu.Unlock()
 		return r
 	}
 }
 
 func (s *Server) health(r *fastglue.Request) error {
 	return r.SendJSON(http.StatusOK, map[string]string{"status": "ok", "service": "firecracker-studio"})
+}
+
+func (s *Server) logs(r *fastglue.Request) error {
+	s.eventsMu.RLock()
+	items := append([]string(nil), s.events...)
+	s.eventsMu.RUnlock()
+	return r.SendJSON(http.StatusOK, map[string]any{"events": items})
 }
 
 func (s *Server) snapshot() metricsSnapshot {
@@ -126,8 +166,74 @@ func (s *Server) snapshot() metricsSnapshot {
 	}
 	return metricsSnapshot{
 		Timestamp: time.Now().UTC(), Workers: 1, MicroVMs: len(vms), RunningVMs: running,
-		Images: len(s.catalog.List()), Operations: len(s.ops.List()), Healthy: true,
+		Images: len(s.catalog.List()), Operations: len(s.ops.List()), Healthy: true, Host: readHostMetrics(),
 	}
+}
+
+func readHostMetrics() hostMetrics {
+	metrics := hostMetrics{GPUMessage: "No GPU telemetry provider detected"}
+	if raw, err := os.ReadFile("/proc/loadavg"); err == nil {
+		parts := strings.Fields(string(raw))
+		if len(parts) > 0 {
+			if load, err := strconv.ParseFloat(parts[0], 64); err == nil {
+				metrics.CPUPercent = minFloat(100, load/float64(runtime.NumCPU())*100)
+			}
+		}
+	}
+	if raw, err := os.ReadFile("/proc/meminfo"); err == nil {
+		var total, available uint64
+		for _, line := range strings.Split(string(raw), "\\n") {
+			fields := strings.Fields(line)
+			if len(fields) < 2 {
+				continue
+			}
+			value, err := strconv.ParseUint(fields[1], 10, 64)
+			if err != nil {
+				continue
+			}
+			switch fields[0] {
+			case "MemTotal:":
+				total = value * 1024
+			case "MemAvailable:":
+				available = value * 1024
+			}
+		}
+		metrics.MemoryTotalBytes, metrics.MemoryUsedBytes = total, total-available
+		if total > 0 {
+			metrics.MemoryPercent = float64(metrics.MemoryUsedBytes) / float64(total) * 100
+		}
+	}
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs("/", &stat); err == nil {
+		metrics.DiskTotalBytes = stat.Blocks * uint64(stat.Bsize)
+		metrics.DiskUsedBytes = (stat.Blocks - stat.Bfree) * uint64(stat.Bsize)
+		if metrics.DiskTotalBytes > 0 {
+			metrics.DiskPercent = float64(metrics.DiskUsedBytes) / float64(metrics.DiskTotalBytes) * 100
+		}
+	}
+	if raw, err := os.ReadFile("/proc/net/dev"); err == nil {
+		for _, line := range strings.Split(string(raw), "\\n") {
+			parts := strings.SplitN(line, ":", 2)
+			if len(parts) != 2 || strings.TrimSpace(parts[0]) == "lo" {
+				continue
+			}
+			fields := strings.Fields(parts[1])
+			if len(fields) >= 9 {
+				rx, _ := strconv.ParseUint(fields[0], 10, 64)
+				tx, _ := strconv.ParseUint(fields[8], 10, 64)
+				metrics.NetworkRxBytes += rx
+				metrics.NetworkTxBytes += tx
+			}
+		}
+	}
+	return metrics
+}
+
+func minFloat(a, b float64) float64 {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func (s *Server) metrics(r *fastglue.Request) error {

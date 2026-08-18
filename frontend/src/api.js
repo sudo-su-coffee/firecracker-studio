@@ -84,6 +84,7 @@ export const SetConnection = call('SetConnection', async () => undefined)
 
 export const Health = call('Health', () => webRequest('/health'))
 export const Metrics = call('Metrics', () => webRequest('/metrics'))
+export const Logs = call('Logs', () => webRequest('/logs'))
 export const MetricsStream = (onMessage, onError) => {
   const source = new EventSource(`${webBase()}/metrics/stream`)
   source.addEventListener('metrics', event => {
