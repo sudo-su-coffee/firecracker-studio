@@ -114,7 +114,7 @@ scripts/                 Linux/WSL2 bootstrap scripts
 
 ## Current boundary
 
-The unified web binary and browser API are implemented. The next runtime milestone is the local Firecracker supervisor: it must start Firecracker through jailer, allocate a Unix socket and artifact directory per VM, apply the kernel/rootfs/network configuration, and expose real lifecycle state through `/api/v1`. Until that supervisor is complete, the API and UI should report missing runtime artifacts or unavailable local execution explicitly.
+The unified web binary and browser API are implemented. v1.3.0 includes a local Firecracker supervisor that launches the managed Firecracker binary with a per-VM Unix socket, applies machine, kernel, rootfs, and boot arguments, and exposes lifecycle state and logs through `/api/v1`. The current supervisor launches the official Firecracker binary directly; jailer, TAP networking, guest stdout transport, persistent VM state, and production snapshot recovery remain explicit follow-up boundaries and are reported rather than presented as complete.
 
 ## License
 

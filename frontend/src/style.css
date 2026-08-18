@@ -66,3 +66,9 @@ label { display: flex; flex-direction: column; gap: 7px; color: var(--muted); fo
 .starter-image-id { display: block; margin-top: 3px; overflow: hidden; color: #a1a1aa !important; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .starter-image-row .primary { width: auto; min-width: 76px; margin-top: 0; }
 @media (max-width: 700px) { .starter-image-row { align-items: flex-start; flex-wrap: wrap; }.starter-image-row .state { margin-left: auto; }.starter-image-row .primary { margin-left: auto; } }
+
+.pull-progress-panel { margin-top: 15px; }
+.pull-log { max-height: 240px; overflow: auto; margin: 0; padding: 14px; border: 1px solid #1f2937; border-radius: 8px; color: #bfdbfe; background: #090d16; font: 11px/1.7 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; }
+.state.downloading, .state.starting { border-color: rgba(96,165,250,.3); color: #93c5fd; background: rgba(96,165,250,.09); }
+.state.completed { border-color: rgba(74,222,128,.28); color: #86efac; background: rgba(74,222,128,.09); }
+.state.failed { border-color: rgba(251,113,133,.3); color: #fda4af; background: rgba(251,113,133,.09); }
