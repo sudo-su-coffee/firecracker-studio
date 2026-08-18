@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/sudo-su-coffee/firecracker-studio/internal/api"
@@ -12,6 +13,7 @@ import (
 	"github.com/sudo-su-coffee/firecracker-studio/internal/converter"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/images"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/operations"
+	"github.com/sudo-su-coffee/firecracker-studio/internal/runtime"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/web"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/worker"
 	"github.com/valyala/fasthttp"
@@ -33,7 +35,9 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	imageConverter := converter.Hybrid{OCI: converter.OCI{ArtifactDir: cfg.ArtifactDir, Profile: converter.Profile{Name: "alpine"}}}
+	runtimeManager := runtime.NewManager()
+	defaultKernel := filepath.Join(runtimeManager.Root(), "images", "default", "vmlinux")
+	imageConverter := converter.Hybrid{OCI: converter.OCI{ArtifactDir: cfg.ArtifactDir, Profile: converter.Profile{Name: "alpine", KernelPath: defaultKernel}}}
 	ops, err := operations.NewManager(ctx, cfg.OperationWorkers, imageConverter, log)
 	if err != nil {
 		log.Error("failed to initialize operation manager", "error", err)

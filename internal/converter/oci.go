@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/google/go-containerregistry/pkg/name"
@@ -84,6 +85,9 @@ func (c OCI) Convert(ctx context.Context, req operations.Request) (operations.Ar
 			return operations.Artifact{}, fmt.Errorf("extract layer %d: %w", index, err)
 		}
 	}
+	if err := writeInit(rootDir, configFile.Config.Entrypoint, configFile.Config.Cmd); err != nil {
+		return operations.Artifact{}, fmt.Errorf("write guest init: %w", err)
+	}
 	rootfsPath := filepath.Join(workDir, "rootfs.ext4")
 	if err := createExt4(rootDir, rootfsPath); err != nil {
 		return operations.Artifact{}, err
@@ -117,6 +121,28 @@ func (c OCI) Convert(ctx context.Context, req operations.Request) (operations.Ar
 		Rootfs:   rootfsPath,
 		Warnings: []string{"guest init and kernel compatibility must be verified before boot", "application image user and entrypoint metadata require a compatible guest agent"},
 	}, nil
+}
+
+func writeInit(root string, entrypoint, command []string) error {
+	args := append(append([]string{}, entrypoint...), command...)
+	if len(args) == 0 {
+		args = []string{"/bin/sh"}
+	}
+	parts := make([]string, 0, len(args))
+	for _, arg := range args {
+		parts = append(parts, shellQuote(arg))
+	}
+	script := "#!/bin/sh\nset -eu\nexec " + strings.Join(parts, " ") + "\n"
+	path := filepath.Join(root, "sbin", "init")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	_ = os.Remove(path)
+	return os.WriteFile(path, []byte(script), 0o755)
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\\"'\\\"'") + "'"
 }
 
 func extractLayer(ctx context.Context, root string, layer v1.Layer) error {
@@ -213,20 +239,31 @@ func createExt4(rootDir, output string) error {
 	if _, err := exec.LookPath("mkfs.ext4"); err != nil {
 		return fmt.Errorf("mkfs.ext4 is required to create Firecracker rootfs: %w", err)
 	}
-	if _, err := exec.LookPath("dd"); err != nil {
-		return fmt.Errorf("dd is required to create Firecracker rootfs: %w", err)
-	}
 	if err := os.MkdirAll(filepath.Dir(output), 0o755); err != nil {
 		return err
 	}
-	cmd := exec.Command("dd", "if=/dev/zero", "of="+output, "bs=1M", "count=512", "status=none")
-	if err := cmd.Run(); err != nil {
+	cmd := exec.Command("du", "-sm", rootDir)
+	outputBytes, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("measure rootfs: %w", err)
+	}
+	parts := strings.Fields(string(outputBytes))
+	usedMiB := 1
+	if len(parts) > 0 {
+		if parsed, parseErr := strconv.Atoi(parts[0]); parseErr == nil {
+			usedMiB = parsed
+		}
+	}
+	sizeMiB := usedMiB + 128
+	if sizeMiB < 512 {
+		sizeMiB = 512
+	}
+	if err := exec.Command("truncate", "-s", fmt.Sprintf("%dM", sizeMiB), output).Run(); err != nil {
 		return fmt.Errorf("allocate ext4 image: %w", err)
 	}
-	if err := exec.Command("mkfs.ext4", "-F", "-q", output).Run(); err != nil {
-		return fmt.Errorf("format ext4 image: %w", err)
+	if err := exec.Command("mkfs.ext4", "-F", "-q", "-d", rootDir, output).Run(); err != nil {
+		return fmt.Errorf("format and populate ext4 image: %w", err)
 	}
-	_ = rootDir
 	return nil
 }
 

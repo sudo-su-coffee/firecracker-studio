@@ -52,7 +52,9 @@ type Operation struct {
 	Request   Request   `json:"request"`
 	Artifact  *Artifact `json:"artifact,omitempty"`
 	Error     string    `json:"error,omitempty"`
+	Logs      []string  `json:"logs,omitempty"`
 	CreatedAt time.Time `json:"createdAt"`
+
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
@@ -121,7 +123,7 @@ func (m *Manager) Enqueue(ctx context.Context, req Request) (Operation, error) {
 		req.BaseProfile = "alpine"
 	}
 	now := time.Now().UTC()
-	op := Operation{ID: uuid.NewString(), Kind: conversionTask, State: StateQueued, Request: req, CreatedAt: now, UpdatedAt: now}
+	op := Operation{ID: uuid.NewString(), Kind: conversionTask, State: StateQueued, Request: req, Logs: []string{fmt.Sprintf("queued %s", req.Source)}, CreatedAt: now, UpdatedAt: now}
 	m.mu.Lock()
 	m.operations[op.ID] = op
 	m.mu.Unlock()
@@ -163,13 +165,24 @@ func (m *Manager) handleConversion(raw []byte, jobCtx tasqueue.JobCtx) error {
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return err
 	}
-	m.update(p.OperationID, func(op *Operation) { op.State = StateRunning })
+	m.update(p.OperationID, func(op *Operation) {
+		op.State = StateRunning
+		op.Logs = append(op.Logs, fmt.Sprintf("running %s", p.Request.Source))
+	})
 	artifact, err := m.converter.Convert(jobCtx, p.Request)
 	if err != nil {
-		m.update(p.OperationID, func(op *Operation) { op.State = StateFailed; op.Error = err.Error() })
+		m.update(p.OperationID, func(op *Operation) {
+			op.State = StateFailed
+			op.Error = err.Error()
+			op.Logs = append(op.Logs, "failed: "+err.Error())
+		})
 		return err
 	}
-	m.update(p.OperationID, func(op *Operation) { op.State = StateSucceeded; op.Artifact = &artifact })
+	m.update(p.OperationID, func(op *Operation) {
+		op.State = StateSucceeded
+		op.Artifact = &artifact
+		op.Logs = append(op.Logs, fmt.Sprintf("succeeded %s", artifact.Digest))
+	})
 	return nil
 }
 
