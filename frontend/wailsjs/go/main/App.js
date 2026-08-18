@@ -34,8 +34,20 @@ export function Images() {
   return window['go']['main']['App']['Images']();
 }
 
+export function InstallRuntime() {
+  return window['go']['main']['App']['InstallRuntime']();
+}
+
 export function Operations() {
   return window['go']['main']['App']['Operations']();
+}
+
+export function RemoveServer(arg1) {
+  return window['go']['main']['App']['RemoveServer'](arg1);
+}
+
+export function RuntimeStatus() {
+  return window['go']['main']['App']['RuntimeStatus']();
 }
 
 export function Servers() {

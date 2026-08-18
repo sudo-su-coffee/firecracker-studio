@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/connections"
+	fcruntime "github.com/sudo-su-coffee/firecracker-studio/internal/runtime"
 )
 
 type App struct {
@@ -19,17 +20,43 @@ type App struct {
 	http    *http.Client
 	bearer  string
 	servers []connections.Server
+	store   *connections.Store
+	runtime *fcruntime.Manager
 }
 
 func NewApp() *App {
-	return &App{http: &http.Client{Timeout: 30 * time.Second}}
+	return &App{http: &http.Client{Timeout: 30 * time.Second}, store: connections.NewStore(), runtime: fcruntime.NewManager()}
 }
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	if a.store == nil {
+		a.store = connections.NewStore()
+	}
+	if a.runtime == nil {
+		a.runtime = fcruntime.NewManager()
+	}
+	servers, err := a.store.Load()
+	if err == nil {
+		a.servers = servers
+	}
 }
 
 func (a *App) Servers() []connections.Server { return append([]connections.Server(nil), a.servers...) }
+
+func (a *App) RuntimeStatus() fcruntime.Status {
+	if a.runtime == nil {
+		a.runtime = fcruntime.NewManager()
+	}
+	return a.runtime.Status(a.contextOrBackground())
+}
+
+func (a *App) InstallRuntime() (fcruntime.Status, error) {
+	if a.runtime == nil {
+		a.runtime = fcruntime.NewManager()
+	}
+	return a.runtime.Install(a.contextOrBackground())
+}
 
 func (a *App) AddServer(name, baseURL, kind, username, bearer string) (connections.Server, error) {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
@@ -50,6 +77,9 @@ func (a *App) AddServer(name, baseURL, kind, username, bearer string) (connectio
 			a.servers[i] = server
 		}
 	}
+	if err := a.saveServers(); err != nil {
+		return connections.Server{}, err
+	}
 	return server, nil
 }
 
@@ -63,6 +93,9 @@ func (a *App) CheckServer(id string) (connections.Server, error) {
 				a.servers[i].Health = "unhealthy"
 			} else {
 				a.servers[i].Health = status
+			}
+			if saveErr := a.saveServers(); saveErr != nil && err == nil {
+				return a.servers[i], saveErr
 			}
 			return a.servers[i], err
 		}
@@ -83,10 +116,34 @@ func (a *App) SwitchServer(id string) (connections.Server, error) {
 			for j := range a.servers {
 				a.servers[j].Active = j == i
 			}
+			if err := a.saveServers(); err != nil {
+				return connections.Server{}, err
+			}
 			return a.servers[i], nil
 		}
 	}
 	return connections.Server{}, fmt.Errorf("server %q not found", id)
+}
+
+func (a *App) RemoveServer(id string) error {
+	for i := range a.servers {
+		if a.servers[i].ID == id {
+			wasActive := a.servers[i].Active || a.baseURL == a.servers[i].URL
+			a.servers = append(a.servers[:i], a.servers[i+1:]...)
+			if wasActive {
+				a.baseURL, a.bearer = "", ""
+			}
+			return a.saveServers()
+		}
+	}
+	return fmt.Errorf("server %q not found", id)
+}
+
+func (a *App) saveServers() error {
+	if a.store == nil {
+		a.store = connections.NewStore()
+	}
+	return a.store.Save(a.servers)
 }
 
 func (a *App) SetConnection(baseURL, bearer string) error {
