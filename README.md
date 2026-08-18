@@ -18,13 +18,41 @@ Browser Vue UI
 
 The browser never opens `/dev/kvm`, executes `jailer`, or talks to a raw Firecracker socket. Those operations remain inside the Go process running on native Linux or WSL2 Ubuntu.
 
-## Run locally
+## Installation and local use
 
-Install the Linux/WSL2 runtime:
+Firecracker Studio uses two independent installation layers. Install the official Firecracker runtime first, then install the Go web server and embedded Vue UI.
+
+### 1. Install the Firecracker runtime
+
+For an authenticated private repository:
+
+```bash
+gh api repos/sudo-su-coffee/firecracker-studio/contents/scripts/install-runtime.sh -H 'Accept: application/vnd.github.raw' | bash
+```
+
+For a public repository:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/sudo-su-coffee/firecracker-studio/main/scripts/install-runtime.sh | bash
 ```
+
+### 2. Install the Go server and web UI
+
+For an authenticated private repository:
+
+```bash
+gh api repos/sudo-su-coffee/firecracker-studio/contents/scripts/install-server.sh -H 'Accept: application/vnd.github.raw' | bash
+```
+
+For a public repository:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sudo-su-coffee/firecracker-studio/main/scripts/install-server.sh | bash
+```
+
+The server listens on `127.0.0.1:7822` by default. For the full Ubuntu/systemd flow, remote binding guidance, updates, and verification, see [`docs/UBUNTU_SERVER_INSTALL.md`](docs/UBUNTU_SERVER_INSTALL.md).
+
+### Run locally from a checkout
 
 Build and run the unified web server:
 
