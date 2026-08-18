@@ -67,10 +67,10 @@ jobs:
           $path = "wails.json"
           $config = Get-Content $path -Raw | ConvertFrom-Json
           if (-not $config.Info) { $config | Add-Member -MemberType NoteProperty -Name Info -Value ([pscustomobject]@{}) }
-          $config.Info.companyName = "sudo-su-coffee"
+          $config.Info.companyName = "BlackLoverTech"
           $config.Info.productName = "Firecracker Studio"
           $config.Info.productVersion = $env:RELEASE_VERSION
-          $config.Info.copyright = "Copyright 2026 sudo-su-coffee"
+          $config.Info.copyright = "Copyright 2026 BlackLoverTech"
           $config.Info.comments = "Firecracker microVM desktop workspace"
           $config | ConvertTo-Json -Depth 10 | Set-Content $path
 

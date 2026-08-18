@@ -82,13 +82,27 @@ On WSL2, restart the distribution from an elevated PowerShell window when requir
 wsl --shutdown
 ```
 
-## Linux installation
+## Linux and WSL2 one-command runtime bootstrap
 
-Install the Linux package or archive for the matching release, launch Firecracker Studio, and select **Install Firecracker** from the dashboard. The same flow works on native Linux and does not require a separate control-plane service.
+For a native Linux host or WSL2 Ubuntu, the unattended runtime bootstrap is:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sudo-su-coffee/firecracker-studio/main/scripts/install-runtime.sh | bash
+```
+
+For a cloned repository, run:
+
+```bash
+bash scripts/install-runtime.sh
+```
+
+The script installs the required host utilities, downloads the official Firecracker release, verifies its checksum, installs both `firecracker` and `jailer`, prepares the Studio runtime directories, and checks KVM access. It does not change BIOS/UEFI settings or bypass Linux privilege boundaries. Reopen the Linux shell or run `newgrp kvm` if the script adds your user to the KVM group.
+
+After the script, launch Firecracker Studio and select **Check local runtime**. The same runtime layout works on native Linux and WSL2.
 
 ## Local and remote connections
 
-Local microVM execution is managed directly by Firecracker Studio through the official Unix-socket API. No URL, username, password, or bearer token is required for local runtime operation.
+Local microVM execution is managed directly by Firecracker Studio through the official Unix-socket API. No URL, username, password, or bearer token is required for local runtime operation. The local socket is not a TCP port and must not be entered in the remote worker URL field.
 
 A remote Firecracker worker is optional. To add one, open **Servers → Add remote worker** and provide the worker’s reachable HTTPS URL. Use the username and bearer token issued by that remote worker. The health check must succeed before Studio allows the profile to become active. Never expose an unauthenticated Firecracker management API to the public internet.
 

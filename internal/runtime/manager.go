@@ -198,7 +198,7 @@ func (m *Manager) installWSL(ctx context.Context) (Status, error) {
 	expected := releaseChecksums[arch]
 	root := "$HOME/.config/firecracker-studio/runtime"
 	url := fmt.Sprintf("https://github.com/firecracker-microvm/firecracker/releases/download/%s/firecracker-%s-%s.tgz", FirecrackerVersion, FirecrackerVersion, arch)
-	script := fmt.Sprintf("set -e; mkdir -p %s/bin; tmp=$(mktemp); curl -fsSL '%s' -o $tmp; echo '%s  '$tmp | sha256sum -c -; tar -xzf $tmp -C %s/bin; mv %s/bin/firecracker-%s-%s %s/bin/firecracker; mv %s/bin/jailer-%s-%s %s/bin/jailer; chmod 700 %s/bin/firecracker %s/bin/jailer; rm -f $tmp", root, url, expected, root, root, FirecrackerVersion, arch, root, root, FirecrackerVersion, arch, root, root, root)
+	script := fmt.Sprintf("set -e; mkdir -p %s/bin; tmp=$(mktemp); work=$(mktemp -d); trap 'rm -rf $tmp $work' EXIT; curl -fsSL '%s' -o $tmp; echo '%s  '$tmp | sha256sum -c -; tar -xzf $tmp -C $work; fc=$(find $work -type f -name 'firecracker-%s-%s' -print -quit); jailer=$(find $work -type f -name 'jailer-%s-%s' -print -quit); test -n \"$fc\"; test -n \"$jailer\"; install -m 700 \"$fc\" %s/bin/firecracker; install -m 700 \"$jailer\" %s/bin/jailer", root, url, expected, FirecrackerVersion, arch, FirecrackerVersion, arch, root, root)
 	if out, err := exec.CommandContext(ctx, "wsl.exe", "--", "bash", "-lc", script).CombinedOutput(); err != nil {
 		return m.Status(ctx), fmt.Errorf("WSL2 runtime install failed: %s: %w", strings.TrimSpace(string(out)), err)
 	}
