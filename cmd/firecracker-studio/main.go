@@ -25,7 +25,8 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	ops, err := operations.NewManager(ctx, cfg.OperationWorkers, converter.DryRun{}, log)
+	imageConverter := converter.Hybrid{OCI: converter.OCI{ArtifactDir: cfg.ArtifactDir, Profile: converter.Profile{Name: "alpine"}}}
+	ops, err := operations.NewManager(ctx, cfg.OperationWorkers, imageConverter, log)
 	if err != nil {
 		log.Error("failed to initialize operation manager", "error", err)
 		os.Exit(1)
