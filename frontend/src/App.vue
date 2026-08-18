@@ -1,0 +1,32 @@
+<script setup>
+import { onMounted, reactive, ref } from 'vue'
+import { SetConnection, Health, Images, Operations, VMs, Convert, CreateVM, VMAction, Snapshot } from '../wailsjs/go/main/App'
+
+const state = reactive({ connectionURL: 'http://127.0.0.1:7822', source: 'alpine:latest', sourceType: 'oci', baseProfile: 'alpine', artifactDigest: '', vcpus: 1, memoryMiB: 512 })
+const data = reactive({ health: null, images: [], operations: [], vms: [], message: '' })
+const busy = ref(false)
+
+async function refresh() {
+  try {
+    data.health = await Health(); data.images = (await Images()).images || []; data.operations = (await Operations()).operations || []; data.vms = (await VMs()).vms || []; data.message = 'Connected to worker'
+  } catch (err) { data.message = String(err) }
+}
+async function connect() { busy.value = true; try { await SetConnection(state.connectionURL, ''); await refresh() } finally { busy.value = false } }
+async function convert() { busy.value = true; try { const op = await Convert(state.source, state.sourceType, state.baseProfile); data.message = `Conversion queued: ${op.id || 'created'}`; await refresh() } catch (err) { data.message = String(err) } finally { busy.value = false } }
+async function createVM() { busy.value = true; try { const vm = await CreateVM(state.artifactDigest, Number(state.vcpus), Number(state.memoryMiB)); data.message = `MicroVM created: ${vm.id || 'created'}`; await refresh() } catch (err) { data.message = String(err) } finally { busy.value = false } }
+async function vmAction(id, action) { try { await VMAction(id, action); await refresh() } catch (err) { data.message = String(err) } }
+async function snapshot(id, action) { try { await Snapshot(id, action, `${id}.snapshot`, `${id}.mem`); data.message = `${action} requested for ${id}` } catch (err) { data.message = String(err) } }
+onMounted(refresh)
+</script>
+
+<template>
+  <div class="app-shell">
+    <header class="topbar"><div class="brand"><span class="brand-mark">F</span><div><strong>Firecracker Studio</strong><small>microVM desktop</small></div></div><div class="connection"><span class="status-dot" :class="{ online: data.health }"></span><input v-model="state.connectionURL" /><button @click="connect" :disabled="busy">Connect</button></div></header>
+    <main class="content">
+      <section class="hero"><div><p class="eyebrow">WORKSPACE</p><h1>Run isolated workloads without the complexity.</h1><p>Convert OCI images, launch Firecracker microVMs, and manage local or remote workers from one focused desktop app.</p></div><div class="hero-card"><span>Worker status</span><strong>{{ data.health?.status || 'Disconnected' }}</strong><small>{{ data.message }}</small></div></section>
+      <section class="grid two"><article class="panel"><div class="panel-head"><div><p class="eyebrow">IMAGE CONVERSION</p><h2>Convert an image</h2></div><span class="chip">OCI → microVM</span></div><label>Image or registry reference<input v-model="state.source" placeholder="alpine:latest" /></label><div class="form-row"><label>Source type<select v-model="state.sourceType"><option value="oci">OCI / Docker image</option><option value="dockerfile">Dockerfile</option><option value="archive">OCI archive</option></select></label><label>Guest base<select v-model="state.baseProfile"><option>alpine</option><option>debian</option><option>ubuntu</option></select></label></div><button class="primary" @click="convert" :disabled="busy || !state.source">Start conversion</button></article><article class="panel"><div class="panel-head"><div><p class="eyebrow">MICROVM</p><h2>Create a workload</h2></div><span class="chip">Firecracker</span></div><label>Artifact digest<input v-model="state.artifactDigest" placeholder="sha256:..." /></label><div class="form-row"><label>vCPU<input v-model="state.vcpus" type="number" min="1" /></label><label>Memory MiB<input v-model="state.memoryMiB" type="number" min="128" step="128" /></label></div><button class="primary" @click="createVM" :disabled="busy || !state.artifactDigest">Create microVM</button></article></section>
+      <section class="panel"><div class="panel-head"><div><p class="eyebrow">RUNNING WORKLOADS</p><h2>MicroVMs</h2></div><button class="ghost" @click="refresh">Refresh</button></div><div v-if="data.vms.length" class="table"><div class="table-row header"><span>ID</span><span>Artifact</span><span>State</span><span>Actions</span></div><div v-for="vm in data.vms" :key="vm.id" class="table-row"><span class="mono">{{ vm.id }}</span><span class="mono truncate">{{ vm.artifactDigest }}</span><span><span class="state" :class="vm.state">{{ vm.state }}</span></span><span class="actions"><button @click="vmAction(vm.id, 'start')">Start</button><button @click="vmAction(vm.id, 'stop')">Stop</button><button @click="snapshot(vm.id, 'create')">Snapshot</button></span></div></div><div v-else class="empty">No microVMs yet. Convert an image and create a workload.</div></section>
+      <section class="grid two"><article class="panel compact"><div class="panel-head"><div><p class="eyebrow">CONVERSIONS</p><h2>Recent operations</h2></div></div><div v-for="op in data.operations.slice().reverse().slice(0, 5)" :key="op.id" class="operation"><span class="state" :class="op.state">{{ op.state }}</span><span class="truncate">{{ op.request?.source }}</span><span class="mono">{{ op.id?.slice(0, 8) }}</span></div><div v-if="!data.operations.length" class="empty small">No operations yet.</div></article><article class="panel compact"><div class="panel-head"><div><p class="eyebrow">IMAGE LIBRARY</p><h2>Imported images</h2></div></div><div v-for="image in data.images.slice().reverse().slice(0, 5)" :key="image.digest" class="operation"><span class="chip">{{ image.sourceType }}</span><span class="truncate">{{ image.reference }}</span><span class="mono">{{ image.digest?.slice(0, 16) }}</span></div><div v-if="!data.images.length" class="empty small">No images registered yet.</div></article></section>
+    </main>
+  </div>
+</template>

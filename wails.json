@@ -1,0 +1,13 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "FirecrackerStudio",
+  "outputfilename": "FirecrackerStudio",
+  "frontend:install": "npm install",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "author": {
+    "name": "sudo-su-coffee",
+    "email": "3.08682222e+08+sudo-su-coffee@users.noreply.github.com"
+  }
+}
