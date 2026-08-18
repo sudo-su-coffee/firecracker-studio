@@ -9,5 +9,12 @@
   "author": {
     "name": "sudo-su-coffee",
     "email": "3.08682222e+08+sudo-su-coffee@users.noreply.github.com"
+  },
+  "Info": {
+    "companyName": "sudo-su-coffee",
+    "productName": "Firecracker Studio",
+    "productVersion": "1.0.0",
+    "copyright": "Copyright 2026 sudo-su-coffee",
+    "comments": "Firecracker microVM desktop workspace"
   }
 }

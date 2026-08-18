@@ -46,19 +46,51 @@ jobs:
       - name: Frontend build
         run: npm run build --prefix frontend
 
+      - name: Validate and normalize release version
+        shell: pwsh
+        run: |
+          $version = "${{ inputs.version }}".Trim()
+          if ($version -notmatch '^v?\d+\.\d+\.\d+$') { throw "Version must match vMAJOR.MINOR.PATCH, for example v1.0.0" }
+          $numeric = $version.TrimStart('v')
+          "RELEASE_VERSION=$numeric" | Out-File -FilePath $env:GITHUB_ENV -Append
+
       - name: Install Wails
         shell: pwsh
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.9.2
+        run: |
+          go install github.com/wailsapp/wails/v2/cmd/wails@v2.9.2
+          $goBin = go env GOPATH
+          "${goBin}\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+
+      - name: Set Windows application metadata
+        shell: pwsh
+        run: |
+          $path = "wails.json"
+          $config = Get-Content $path -Raw | ConvertFrom-Json
+          if (-not $config.Info) { $config | Add-Member -MemberType NoteProperty -Name Info -Value ([pscustomobject]@{}) }
+          $config.Info.companyName = "sudo-su-coffee"
+          $config.Info.productName = "Firecracker Studio"
+          $config.Info.productVersion = $env:RELEASE_VERSION
+          $config.Info.copyright = "Copyright 2026 sudo-su-coffee"
+          $config.Info.comments = "Firecracker microVM desktop workspace"
+          $config | ConvertTo-Json -Depth 10 | Set-Content $path
 
       - name: Build Windows application
         shell: pwsh
-        run: wails build -clean -platform windows/amd64 -nsis -ldflags "-X main.version=${{ inputs.version }}"
+        run: |
+          wails build -clean -platform windows/amd64 -nsis -ldflags "-X main.version=$env:RELEASE_VERSION"
+          $installer = Get-ChildItem -Path build/bin -Filter "*-installer.exe" | Select-Object -First 1
+          if (-not $installer) { throw "NSIS installer was not produced" }
+          Rename-Item $installer.FullName "FirecrackerStudioInstaller.exe"
 
       - name: Generate checksums
         shell: pwsh
         run: |
-          $files = Get-ChildItem -Path build/bin -File
-          $files | Get-FileHash -Algorithm SHA256 | Format-Table -AutoSize | Out-File build/bin/SHA256SUMS.txt
+          $files = Get-ChildItem -Path build/bin -Filter "*.exe" -File
+          $lines = foreach ($file in $files) {
+            $hash = (Get-FileHash $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $($file.Name)"
+          }
+          $lines | Set-Content build/bin/SHA256SUMS.txt
 
       - uses: actions/upload-artifact@v4
         with:
@@ -74,6 +106,7 @@ jobs:
           tag_name: ${{ inputs.version }}
           name: Firecracker Studio ${{ inputs.version }}
           generate_release_notes: true
+          prerelease: false
           files: |
             build/bin/*.exe
             build/bin/SHA256SUMS.txt
