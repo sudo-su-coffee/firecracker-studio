@@ -36,6 +36,7 @@ func main() {
 	defer stop()
 
 	runtimeManager := runtime.NewManager()
+	runtimeStatus := runtimeManager.Status(ctx)
 	defaultKernel := filepath.Join(runtimeManager.Root(), "images", "default", "vmlinux")
 	imageConverter := converter.Hybrid{OCI: converter.OCI{ArtifactDir: cfg.ArtifactDir, Profile: converter.Profile{Name: "alpine", KernelPath: defaultKernel}}}
 	ops, err := operations.NewManager(ctx, cfg.OperationWorkers, imageConverter, log)
@@ -44,7 +45,7 @@ func main() {
 		os.Exit(1)
 	}
 	catalog := images.NewCatalog()
-	workerService, err := worker.NewService(worker.DirectorySocketFactory{Dir: cfg.ArtifactDir})
+	workerService, err := worker.NewService(worker.DirectorySocketFactory{Dir: cfg.ArtifactDir, FirecrackerPath: runtimeStatus.Firecracker})
 	if err != nil {
 		log.Error("failed to initialize worker service", "error", err)
 		os.Exit(1)

@@ -119,3 +119,21 @@ The unified web binary and browser API are implemented. The next runtime milesto
 ## License
 
 The repository is currently private while the architecture is stabilized. The intended release model is fully open source under a permissive license after the foundation is reviewed.
+
+## Real kernel/rootfs-backed workload
+
+The worker can launch the managed Firecracker binary on a per-workload Unix socket when both boot assets are supplied. After installing the runtime and placing `vmlinux` and `rootfs.ext4` under the runtime image directory, run:
+
+```bash
+./scripts/create-real-vm.sh
+```
+
+For explicit assets:
+
+```bash
+./scripts/create-real-vm.sh "$HOME/firecracker-images/vmlinux" "$HOME/firecracker-images/rootfs.ext4"
+```
+
+The script creates the workload through `POST /api/v1/vms`, launches Firecracker with `--api-sock`, configures the machine, boot source, and rootfs through the official Unix-socket API, then calls the Studio start endpoint. The resulting workload and lifecycle log are visible under **Workloads**.
+
+The server must be upgraded to the release containing the supervisor implementation. Existing records created by older releases do not have a running Firecracker process; create a new workload after upgrading.

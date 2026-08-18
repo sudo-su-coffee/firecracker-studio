@@ -117,7 +117,7 @@ onBeforeUnmount(() => { metricsSource?.close(); if (refreshTimer) window.clearIn
       <div class="brand"><span class="brand-mark">F</span><div><strong>Firecracker Studio</strong><small>microVM control</small></div></div>
       <div class="worker-card"><div class="worker-title"><span class="status-dot" :class="{ online: data.health }"></span><span>{{ data.health ? 'Connected' : 'Offline' }}</span></div><strong>{{ data.health?.status || 'Checking server' }}</strong><small>{{ state.connectionURL || 'No server selected' }}</small></div>
       <nav><button v-for="tab in tabs" :key="tab.id" :class="{ active: state.tab === tab.id }" @click="state.tab = tab.id"><span class="nav-icon">{{ tab.icon }}</span>{{ tab.label }}<span v-if="tab.id === 'vms' && data.vms.length" class="nav-count">{{ data.vms.length }}</span></button></nav>
-      <div class="sidebar-bottom"><small>v1.2.1 · BlackLoverTech</small></div>
+      <div class="sidebar-bottom"><small>v1.2.2 · BlackLoverTech</small></div>
     </aside>
 
     <main class="main-area">
