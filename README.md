@@ -38,9 +38,9 @@ The first milestone includes Docker Hub and OCI registry image references, local
 
 Firecracker Studio is not a replacement VMM, does not fork or modify Firecracker, does not require Docker or containerd at runtime, and does not promise that every container image is automatically bootable as a microVM. Images that depend on unsupported kernel features, privileged container behavior, host mounts, Docker sockets, unsupported devices, or architecture-specific assumptions must be rejected with actionable diagnostics.
 
-## Relationship to Porter
+## Runtime model
 
-Firecracker Studio is an independent local and remote-worker desktop product. Porter is the larger self-hosted cloud platform that can consume the same verified artifacts and schedule them across managed workers. Firecracker Studio must remain useful without Porter.
+Firecracker Studio is a standalone Firecracker desktop product. It installs and manages the local Firecracker runtime on native Linux or inside WSL2 on Windows, and it can optionally connect to independently managed remote Linux Firecracker workers. The desktop app remains useful without an account, control plane, or external platform.
 
 ## Repository layout
 

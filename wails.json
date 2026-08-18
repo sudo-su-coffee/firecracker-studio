@@ -7,14 +7,14 @@
   "frontend:dev:watcher": "npm run dev",
   "frontend:dev:serverUrl": "auto",
   "author": {
-    "name": "sudo-su-coffee",
-    "email": "3.08682222e+08+sudo-su-coffee@users.noreply.github.com"
+    "name": "BlackLoverTech",
+    "email": "support@blacklovertech.com"
   },
   "Info": {
-    "companyName": "sudo-su-coffee",
+    "companyName": "BlackLoverTech",
     "productName": "Firecracker Studio",
-    "productVersion": "1.0.0",
-    "copyright": "Copyright 2026 sudo-su-coffee",
+    "productVersion": "1.0.2",
+    "copyright": "Copyright 2026 BlackLoverTech",
     "comments": "Firecracker microVM desktop workspace"
   }
 }

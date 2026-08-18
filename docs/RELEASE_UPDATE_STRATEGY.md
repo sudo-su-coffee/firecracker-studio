@@ -23,9 +23,9 @@ Before broad distribution, Windows installers should be Authenticode-signed with
 
 ## Worker updates
 
-The desktop application and the Porter/Firecracker worker are separate components. Updating the Windows UI must not silently replace the user’s WSL2 worker, Firecracker binary, kernel, rootfs, volumes, or running microVMs. A future worker update should be an explicit operation that displays the target version, compatibility requirements, restart impact, and rollback plan.
+The desktop application and its local Firecracker runtime are separate update concerns. Updating the Windows UI must not silently replace the user’s WSL2 runtime, Firecracker binary, jailer, kernel, rootfs, volumes, or running microVMs. A runtime update should be an explicit operation that displays the target version, compatibility requirements, restart impact, and rollback plan.
 
-For remote workers, the control plane can expose a worker version and compatibility range. Studio should warn when the UI and worker versions are incompatible, but it should not force an update. For local WSL2 workers, the user should run the documented Porter update command manually until a signed and transactional worker updater exists.
+For remote Firecracker workers, the worker can expose a version and compatibility range. Studio should warn when the UI and worker versions are incompatible, but it should not force an update. For the local WSL2 runtime, Studio should provide a user-approved, signed, transactional runtime update that preserves images, volumes, snapshots, and running-workload safety.
 
 ## Release channels
 
@@ -33,4 +33,4 @@ The stable channel should use tags such as `v1.0.1`. A preview channel can use p
 
 ## Current release
 
-Windows v1.0.1 is published at https://github.com/sudo-su-coffee/firecracker-studio/releases/tag/v1.0.1. The current release includes the manual worker connection flow and first-run onboarding panel. It does not yet contain an in-app update checker or Authenticode signing.
+Windows v1.0.1 is published at https://github.com/sudo-su-coffee/firecracker-studio/releases/tag/v1.0.1. The current release includes the manual remote-worker connection flow, local runtime installer, and first-run onboarding panel. It does not yet contain an in-app update checker or Authenticode signing.

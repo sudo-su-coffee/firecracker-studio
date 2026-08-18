@@ -1,6 +1,6 @@
 # Firecracker Studio Standalone Runtime
 
-Firecracker Studio is designed to manage a local Firecracker runtime directly. Porter is not required for local installation or local microVM execution. Remote worker profiles are an optional separate feature for connecting to another host.
+Firecracker Studio manages a local Firecracker runtime directly. Remote worker profiles are an optional separate feature for connecting to another Linux host.
 
 ## What Studio installs
 
@@ -11,7 +11,7 @@ When the user selects **Install Firecracker**, the Wails desktop application dow
 | Linux | `$XDG_CONFIG_HOME/FirecrackerStudio/runtime/bin` or the platform user config directory |
 | Windows | The selected WSL2 Ubuntu user’s `~/.config/firecracker-studio/runtime/bin` |
 
-The installer does not install Docker, containerd, an OCI runtime, or Porter. OCI conversion remains a BuildKit-based Studio capability, while Firecracker execution uses the official Unix-socket API.
+The installer does not install Docker, containerd, or any unrelated container runtime. OCI conversion remains a BuildKit-based Studio capability, while Firecracker execution uses the official Unix-socket API.
 
 ## Windows behavior
 

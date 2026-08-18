@@ -41,88 +41,70 @@ wsl --list --verbose
 
 The distribution must show version `2`.
 
-## What the installer does not automate
+## What the installer does
 
-The installer only installs the Firecracker Studio desktop application, creates shortcuts, and stores the application configuration. It does not install WSL2, install Firecracker, start the Porter worker, modify `/dev/kvm`, create TAP interfaces, or change firewall and Linux permissions.
+The Windows installer installs the Firecracker Studio desktop application. From the dashboard, **Install Firecracker** downloads and verifies the official `firecracker` and `jailer` binaries. On Windows, the download is placed inside the selected WSL2 Ubuntu user environment. On Linux, the binaries are placed in the Studio-managed runtime directory.
 
-On first launch, the user manually adds a server profile with the worker URL. Studio then performs the health check and allows switching only when the endpoint responds successfully. A connection refusal means that the worker is not running at that URL or that the URL is not reachable from Windows.
+Studio does not silently change BIOS settings, force a restart, create privileged TAP devices, modify firewall policy, or change Linux permissions. It reports those requirements clearly so the user can approve and complete them.
 
-## What requires manual work
+## WSL2/Linux readiness
 
-The user is responsible for WSL installation, the Windows restart, BIOS/UEFI virtualization, Hyper-V/Virtual Machine Platform availability, `/dev/kvm` access, Firecracker and `jailer` installation, kernel/rootfs preparation, TAP networking, firewall rules, and starting the worker process. This separation keeps the desktop app predictable and avoids silently changing privileged host configuration.
-
-## WSL2 backend readiness checks
-
-Inside Ubuntu, run:
-
-Porter’s default control-plane URL is `http://127.0.0.1:8080`. The Studio connector checks `GET /health`, not `/api/v1/health`.
+Inside Ubuntu or native Linux, install the basic host utilities:
 
 ```bash
 sudo apt-get update
 sudo apt-get install -y curl ca-certificates iproute2 iptables util-linux acl e2fsprogs
+```
 
-command -v firecracker || echo 'Firecracker binary is missing'
-command -v jailer || echo 'jailer binary is missing'
+After using **Install Firecracker** in Studio, verify the runtime from the dashboard or check the managed files:
 
-# Porter source checkout: install the pinned official Firecracker binary and jailer
-cd ~/porter
-sudo bash scripts/backend/install-firecracker.sh v1.16.1 "$(uname -m)"
+```bash
+find ~/.config/firecracker-studio/runtime/bin -maxdepth 1 -type f -executable -print
+command -v firecracker || true
+command -v jailer || true
 ls -l /dev/kvm || true
 [ -r /dev/kvm ] && [ -w /dev/kvm ] && echo 'KVM access: OK' || echo 'KVM access: FAIL'
 ip link show
 ```
 
-Firecracker requires Linux KVM and read/write access to `/dev/kvm`. It also requires a compatible uncompressed kernel image and an ext4 rootfs image. The Studio catalog should download and verify these artifacts; users should not need to assemble them manually after the managed catalog is complete.
+Firecracker also requires a compatible uncompressed kernel image and an ext4 rootfs image. Studio’s managed catalog is responsible for downloading and verifying those artifacts before a microVM can boot.
 
-The official Firecracker release binary and `jailer` should be downloaded for the host architecture from the official Firecracker release page, checksum-verified, and installed into the Studio-managed worker directory. Do not download an arbitrary binary from an untrusted mirror.
-
-## Linux one-line bootstrap
-
-For a Linux host where the user wants to install prerequisites and then launch the Studio worker, the planned command is:
+If the KVM check fails, add the Linux user to the KVM group and start a new shell:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sudo-su-coffee/firecracker-studio/main/scripts/install-linux.sh | bash
+sudo usermod -aG kvm "$USER"
+newgrp kvm
 ```
 
-This command is not active until `scripts/install-linux.sh` is committed and the repository’s release policy has been finalized. Until then, use the repository’s Linux build workflow and install the official Firecracker artifacts through the Studio catalog.
+On WSL2, restart the distribution from an elevated PowerShell window when required:
 
-## Username, password, token, and URL
-
-For the default local Porter installation, use:
-
-| Field | Value |
-|---|---|
-| Worker URL | `http://127.0.0.1:8080` |
-| Health check | `GET http://127.0.0.1:8080/health` |
-| Username | `admin` for the bootstrap administrator |
-| Password | The one-time password printed by Porter’s installer and stored in `/var/porter/porter.env` |
-| Bearer token | The token returned by `POST /auth/login` |
-
-Firecracker Studio does not need the password for ordinary API requests. Log in to Porter once, copy the returned token, and paste that token into Studio’s **Bearer token** field. The username is currently a descriptive label in the server profile; the token is what authenticates API requests.
-
-To obtain a token manually inside WSL2, replace the password value with the password from `/var/porter/porter.env`:
-
-```bash
-curl -fsS -X POST http://127.0.0.1:8080/auth/login \\
-  -H 'Content-Type: application/json' \\
-  -d '{"username":"admin","password":"REPLACE_WITH_BOOTSTRAP_PASSWORD"}'
+```powershell
+wsl --shutdown
 ```
 
-The response contains a `token` field. Paste that value into **Bearer token**. For a remote worker, use its reachable HTTPS URL, for example `https://worker.example.com`, and use the remote Porter administrator or API token. Do not expose an unauthenticated Porter server to the public internet.
+## Linux installation
+
+Install the Linux package or archive for the matching release, launch Firecracker Studio, and select **Install Firecracker** from the dashboard. The same flow works on native Linux and does not require a separate control-plane service.
+
+## Local and remote connections
+
+Local microVM execution is managed directly by Firecracker Studio through the official Unix-socket API. No URL, username, password, or bearer token is required for local runtime operation.
+
+A remote Firecracker worker is optional. To add one, open **Servers → Add remote worker** and provide the worker’s reachable HTTPS URL. Use the username and bearer token issued by that remote worker. The health check must succeed before Studio allows the profile to become active. Never expose an unauthenticated Firecracker management API to the public internet.
 
 ## Recommended first-run flow
 
 1. Install and launch WSL2 Ubuntu manually on Windows, or prepare native Linux.
-2. Install Firecracker and `jailer`, prepare KVM/TAP access, and start the Porter worker manually.
+2. Install Firecracker Studio, select **Install Firecracker**, and prepare KVM/TAP access in WSL2 or Linux.
 3. Install and launch Firecracker Studio.
-4. Open **Servers → Add server**, select **Local**, and enter the Porter URL. Porter listens on `http://127.0.0.1:8080` by default, and its public health endpoint is `/health`.
+4. Open **Dashboard → Install Firecracker**. For a separately managed local or remote Firecracker worker, open **Servers → Add remote worker** and enter its HTTP or HTTPS URL.
 5. Select **Check health and add**. Studio switches to the worker only after `GET /health` succeeds.
 6. Import a Docker/OCI image or open a Compose file.
 7. Studio sends conversion and lifecycle requests to the selected worker; the worker builds artifacts through BuildKit and starts isolated Firecracker microVMs.
 
 ## Important distinction
 
-The `.exe` is the desktop control plane. It does not turn Windows itself into a Firecracker host. On Windows, Firecracker runs inside WSL2, while the Studio app connects to Porter over its HTTP URL. For the default local Porter setup, use `http://127.0.0.1:8080`; for a remote worker, use the worker’s HTTPS URL and bearer token. Remote Linux workers can be added through the server manager after their authenticated health endpoint is available.
+The `.exe` is the Firecracker Studio desktop application. On Windows, the local runtime is installed inside WSL2 Ubuntu; on native Linux, it is installed directly into the Studio runtime directory. Remote Linux workers are optional and can be added through the server manager with their authenticated HTTP or HTTPS URL.
 
 ## References
 

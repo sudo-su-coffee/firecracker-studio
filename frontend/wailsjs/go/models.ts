@@ -1,5 +1,5 @@
 export namespace connections {
-	
+
 	export class Server {
 	    id: string;
 	    name: string;
@@ -10,7 +10,7 @@ export namespace connections {
 	    // Go type: time
 	    lastChecked?: any;
 	    active: boolean;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new Server(source);
 	    }
@@ -26,7 +26,7 @@ export namespace connections {
 	        this.lastChecked = this.convertValues(source["lastChecked"], null);
 	        this.active = source["active"];
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -74,10 +74,10 @@ export namespace runtime {
 	        this.kvm = source["kvm"];
 	        this.tap = source["tap"];
 	        this.kernel = source["kernel"];
-	        this.rootfs = source["rootfs"];
-	        this.message = source["message"];
-	    }
+        this.rootfs = source["rootfs"];
+        this.message = source["message"];
+    }
+
 	}
 
 }
-

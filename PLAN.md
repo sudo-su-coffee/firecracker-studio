@@ -2,7 +2,7 @@
 
 ## Goal
 
-Build a Docker Desktop-like cross-platform application that makes Firecracker microVMs simple to install, convert, run, inspect, and connect to remotely. The application must remain independent of Porter while producing artifacts Porter can consume.
+Build a Docker Desktop-like cross-platform application that makes Firecracker microVMs simple to install, convert, run, inspect, and connect to remotely. The application must remain self-contained while producing verified Firecracker artifacts for local or remote execution.
 
 ## Phase 0: Repository and architecture foundation
 
@@ -14,7 +14,7 @@ Define a versioned worker API for local and remote execution. It should support 
 
 ## Phase 2: Artifact and image management
 
-Support local OCI layouts, Docker archives, registry references, manifests, indexes, configs, layers, digests, whiteouts, and image metadata. Add content-addressed storage, cache management, cleanup, import/export, and artifact verification. Keep conversion independent from Porter.
+Support local OCI layouts, Docker archives, registry references, manifests, indexes, configs, layers, digests, whiteouts, and image metadata. Add content-addressed storage, cache management, cleanup, import/export, and artifact verification. Keep conversion independent from any external control plane.
 
 ## Phase 3: Docker/OCI-to-Firecracker conversion
 
@@ -49,11 +49,11 @@ Test OCI parsing and secure extraction with malformed archives, whiteouts, symli
 | 0.3 | Docker/OCI conversion and real Firecracker start/stop on Linux |
 | 0.4 | Windows WSL2 backend and remote worker connectivity |
 | 0.5 | Snapshots, port mappings, logs, exports, signed packaging, and recovery |
-| 1.0 | Stable cross-platform desktop product with compatibility matrix and Porter artifact integration |
+| 1.0 | Stable cross-platform desktop product with compatibility matrix and local/remote Firecracker execution |
 
 ## Design rules
 
-The desktop UI must never run privileged Firecracker operations directly. The converter must not depend on Porter. Remote workers must be independently deployable. Every operation must have an explicit state, timeout, cancellation behavior, and useful error. Every artifact must be content-addressed and verified before execution.
+The desktop UI must never run privileged Firecracker operations directly. The converter must not depend on an external platform. Remote workers must be independently deployable. Every operation must have an explicit state, timeout, cancellation behavior, and useful error. Every artifact must be content-addressed and verified before execution.
 
 ## Production installation and release roadmap
 
