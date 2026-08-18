@@ -82,6 +82,28 @@ func (s *Service) Stop(ctx context.Context, id string) (VM, error) {
 	return s.update(id, "stopping", vm), nil
 }
 
+func (s *Service) CreateSnapshot(ctx context.Context, id, snapshotPath, memPath string) error {
+	client, _, err := s.lookup(id)
+	if err != nil {
+		return err
+	}
+	if snapshotPath == "" || memPath == "" {
+		return fmt.Errorf("snapshot and memory paths are required")
+	}
+	return client.CreateSnapshot(ctx, firecracker.SnapshotCreate{SnapshotType: "Full", SnapshotPath: snapshotPath, MemFilePath: memPath})
+}
+
+func (s *Service) RestoreSnapshot(ctx context.Context, id, snapshotPath, memPath string) error {
+	client, _, err := s.lookup(id)
+	if err != nil {
+		return err
+	}
+	if snapshotPath == "" || memPath == "" {
+		return fmt.Errorf("snapshot and memory paths are required")
+	}
+	return client.LoadSnapshot(ctx, firecracker.SnapshotLoad{SnapshotPath: snapshotPath, MemBackend: memPath})
+}
+
 func (s *Service) Get(id string) (VM, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

@@ -40,6 +40,8 @@ func New(ops *operations.Manager, catalog *images.Catalog, workers *worker.Servi
 	app.POST("/api/v1/vms", server.createVM(workers))
 	app.POST("/api/v1/vms/:id/start", server.startVM(workers))
 	app.POST("/api/v1/vms/:id/stop", server.stopVM(workers))
+	app.POST("/api/v1/vms/:id/snapshots", server.createSnapshot(workers))
+	app.POST("/api/v1/vms/:id/snapshots/restore", server.restoreSnapshot(workers))
 	app.GET("/api/v1/operations/:id", server.getOperation(ops))
 	app.NotFound(func(r *fastglue.Request) error {
 		return r.SendJSON(http.StatusNotFound, map[string]string{"error": "not_found"})
@@ -124,6 +126,39 @@ func (s *Server) startVM(service *worker.Service) fastglue.FastRequestHandler {
 
 func (s *Server) stopVM(service *worker.Service) fastglue.FastRequestHandler {
 	return s.vmAction(service, false)
+}
+
+type snapshotRequest struct {
+	SnapshotPath string `json:"snapshotPath"`
+	MemoryPath   string `json:"memoryPath"`
+}
+
+func (s *Server) createSnapshot(service *worker.Service) fastglue.FastRequestHandler {
+	return s.snapshotAction(service, false)
+}
+
+func (s *Server) restoreSnapshot(service *worker.Service) fastglue.FastRequestHandler {
+	return s.snapshotAction(service, true)
+}
+
+func (s *Server) snapshotAction(service *worker.Service, restore bool) fastglue.FastRequestHandler {
+	return func(r *fastglue.Request) error {
+		id := fmt.Sprint(r.RequestCtx.UserValue("id"))
+		var req snapshotRequest
+		if err := r.Decode(&req, "json"); err != nil {
+			return r.SendJSON(http.StatusBadRequest, map[string]string{"error": "invalid_request", "message": err.Error()})
+		}
+		var err error
+		if restore {
+			err = service.RestoreSnapshot(r.RequestCtx, id, req.SnapshotPath, req.MemoryPath)
+		} else {
+			err = service.CreateSnapshot(r.RequestCtx, id, req.SnapshotPath, req.MemoryPath)
+		}
+		if err != nil {
+			return r.SendJSON(http.StatusBadRequest, map[string]string{"error": "snapshot_operation_failed", "message": err.Error()})
+		}
+		return r.SendJSON(http.StatusAccepted, map[string]string{"status": "accepted", "vmId": id})
+	}
 }
 
 func (s *Server) vmAction(service *worker.Service, start bool) fastglue.FastRequestHandler {
