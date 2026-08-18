@@ -32,6 +32,7 @@ func New(ops *operations.Manager, catalog *images.Catalog, workers *worker.Servi
 	app.After(requestLogger(log))
 	server := &Server{app: app}
 	app.GET("/api/v1/health", server.health)
+	app.GET("/api/v1/base-images", server.listBaseImages)
 	app.GET("/api/v1/images", server.listImages(catalog))
 	app.POST("/api/v1/images", server.registerImage(catalog))
 	app.POST("/api/v1/conversions", server.enqueueConversion(ops))
@@ -64,6 +65,10 @@ func requestLogger(log *slog.Logger) fastglue.FastMiddleware {
 
 func (s *Server) health(r *fastglue.Request) error {
 	return r.SendJSON(http.StatusOK, map[string]string{"status": "ok", "service": "firecracker-studio"})
+}
+
+func (s *Server) listBaseImages(r *fastglue.Request) error {
+	return r.SendJSON(http.StatusOK, map[string]any{"images": images.ManagedBaseImages()})
 }
 
 func (s *Server) listImages(catalog *images.Catalog) fastglue.FastRequestHandler {

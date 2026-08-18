@@ -44,6 +44,11 @@ func (a *App) Health() (map[string]any, error) {
 	return out, a.request(http.MethodGet, "/api/v1/health", nil, &out)
 }
 
+func (a *App) BaseImages() (map[string]any, error) {
+	var out map[string]any
+	return out, a.request(http.MethodGet, "/api/v1/base-images", nil, &out)
+}
+
 func (a *App) Images() (map[string]any, error) {
 	var out map[string]any
 	return out, a.request(http.MethodGet, "/api/v1/images", nil, &out)
