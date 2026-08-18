@@ -1,61 +1,93 @@
 # Firecracker Studio
 
-Firecracker Studio is a cross-platform desktop application for managing Firecracker microVM workloads through a simple, Docker Desktop-like experience. It is designed for Windows, Linux, and later macOS, with a Vue-based interface and a Go/Wails application shell.
+Firecracker Studio is a **single Go web server with an embedded Vue UI** for operating official Firecracker microVMs. It provides a Docker Desktop-like experience through a browser while keeping KVM, jailer, Firecracker, Unix sockets, kernels, rootfs images, volumes, and snapshots inside a Linux or WSL2 runtime.
 
-Firecracker Studio does not modify Firecracker. It packages the user experience around the official Firecracker VMM and its Unix-socket API. Users can import Docker or OCI images, convert compatible images into standalone Firecracker artifacts, run and inspect microVMs, manage ports and resources, create snapshots, view logs, and connect the desktop UI to a remote Firecracker worker.
+The product does not modify Firecracker and does not require Docker or containerd at runtime. The Go backend owns the control API and privileged runtime boundary; the Vue application is the user interface.
 
-## Why Wails
-
-Wails is the preferred desktop framework because Firecracker Studio’s core services are written in Go. Wails permits a modern Vue frontend while keeping the local controller, artifact manager, worker connector, and security-sensitive orchestration in Go. It avoids placing privileged runtime logic in a browser process and avoids requiring a separate Node.js runtime for the application controller.
-
-The application uses a strict process boundary:
+## Architecture
 
 ```text
-Vue UI in Wails
-  -> typed local IPC / authenticated local API
-    -> desktop controller
-      -> privileged Firecracker supervisor
-        -> official Firecracker Unix socket, KVM, TAP, cgroups, and jailer
+Browser Vue UI
+   -> same-origin /api/v1
+      -> Go Firecracker Studio server
+         -> runtime installer and diagnostics
+         -> image conversion and artifact catalog
+         -> local Unix-socket supervisor
+         -> official Firecracker + jailer + KVM/TAP
 ```
 
-Wails v2 is the conservative MVP target. Wails v3 may be evaluated after its packaging and lifecycle APIs are stable enough for production distribution.
+The browser never opens `/dev/kvm`, executes `jailer`, or talks to a raw Firecracker socket. Those operations remain inside the Go process running on native Linux or WSL2 Ubuntu.
 
-## Windows and Linux operation
+## Run locally
 
-On Linux, Firecracker Studio can run the supervisor natively when the host has KVM access, TAP support, cgroups, and the required kernel/rootfs capabilities. On Windows, the UI runs natively and the application manages a dedicated WSL2 Linux backend. The app must detect `/dev/kvm`, network capabilities, virtualization support, and permissions before offering local microVM execution.
+Install the Linux/WSL2 runtime:
 
-When local execution is unavailable, the UI can still inspect images, prepare conversions, manage artifacts, and connect to a remote authenticated Firecracker worker.
+```bash
+curl -fsSL https://raw.githubusercontent.com/sudo-su-coffee/firecracker-studio/main/scripts/install-runtime.sh | bash
+```
 
-## Remote workers
+Build and run the unified web server:
 
-Remote workers are first-class. A worker connection includes a human-readable name, endpoint, transport security configuration, authentication material stored in the operating system credential store, capability discovery, health state, and compatibility information. The desktop application never exposes the Firecracker socket directly over the network. A remote worker agent owns the Firecracker process and exposes a narrow authenticated management API.
+```bash
+npm ci --prefix frontend
+npm run build --prefix frontend
+rm -rf internal/web/dist
+mkdir -p internal/web/dist
+cp -R frontend/dist/. internal/web/dist/
+go build -trimpath -ldflags '-s -w' -o firecracker-studio ./cmd/firecracker-studio
+FIRECRACKER_STUDIO_LISTEN=127.0.0.1:7822 ./firecracker-studio
+```
 
-## Initial capabilities
+Open the UI at [http://127.0.0.1:7822](http://127.0.0.1:7822). The health endpoint is [http://127.0.0.1:7822/api/v1/health](http://127.0.0.1:7822/api/v1/health).
 
-The first milestone includes Docker Hub and OCI registry image references, local Docker/OCI archive import, OCI manifest and layer inspection, secure conversion into a standalone Firecracker artifact, artifact verification, local and remote worker discovery, microVM start/stop/restart, resource settings, port mappings, console logs, image and VM lists, snapshot create/restore, export, cleanup, and capability diagnostics.
+## Development
 
-## Non-goals
+Start the Go runtime API:
 
-Firecracker Studio is not a replacement VMM, does not fork or modify Firecracker, does not require Docker or containerd at runtime, and does not promise that every container image is automatically bootable as a microVM. Images that depend on unsupported kernel features, privileged container behavior, host mounts, Docker sockets, unsupported devices, or architecture-specific assumptions must be rejected with actionable diagnostics.
+```bash
+go run ./cmd/firecracker-studio
+```
 
-## Runtime model
+Start the Vue development server in another terminal:
 
-Firecracker Studio is a standalone Firecracker desktop product. It installs and manages the local Firecracker runtime on native Linux or inside WSL2 on Windows, and it can optionally connect to independently managed remote Linux Firecracker workers. The desktop app remains useful without an account, control plane, or external platform.
+```bash
+npm run dev --prefix frontend
+```
+
+Vite proxies `/api/v1` to the Go server at `http://127.0.0.1:7822`. Set `FIRECRACKER_STUDIO_API` to use a different local API address.
+
+## Windows and WSL2
+
+On Windows, run the Go server inside WSL2 Ubuntu and open the WSL2 listener from the Windows browser. The official Firecracker and jailer binaries are installed inside WSL2; Firecracker itself remains a Linux process because it requires KVM.
+
+The same web binary can run on native Linux. Remote Linux workers are optional and use an authenticated HTTPS management API. A raw Firecracker Unix socket is never exposed directly to a browser or public network.
+
+## Core capabilities
+
+The initial product surface includes OCI/Docker image conversion, managed Firecracker base images, artifact verification, local and remote runtime status, microVM creation and lifecycle actions, snapshots, logs, volumes, isolated networking groups, diagnostics, and Docker Compose-like multi-service workflows.
+
+The system must reject images that require unsupported kernel features, privileged container behavior, host mounts, Docker sockets, unsupported devices, or incompatible architecture assumptions. Diagnostics should explain why an image or workload cannot boot rather than presenting a false success state.
 
 ## Repository layout
 
 ```text
-app/             Wails application and Go bindings
-frontend/        Vue application
-internal/        controller, worker protocol, artifact, and security packages
-docs/            architecture, plans, protocol, and compatibility documentation
-build/           platform packaging configuration
+cmd/firecracker-studio/  single Go web-server entrypoint
+frontend/                Vue application and browser development tooling
+internal/api/            authenticated runtime HTTP API
+internal/converter/      OCI/Docker image conversion
+internal/images/         managed base-image catalog
+internal/operations/     conversion job queue and operation state
+internal/runtime/        Firecracker/jailer installation and readiness
+internal/web/            embedded Vue assets and SPA serving
+internal/worker/         Firecracker lifecycle and Unix-socket service
+docs/                    architecture, installation, release, and workflow guides
+scripts/                 Linux/WSL2 bootstrap scripts
 ```
 
-## Development status
+## Current boundary
 
-The project is in architecture and scaffold phase. The first implementation target is the local controller and worker protocol, followed by artifact inspection/conversion and the initial Vue desktop shell.
+The unified web binary and browser API are implemented. The next runtime milestone is the local Firecracker supervisor: it must start Firecracker through jailer, allocate a Unix socket and artifact directory per VM, apply the kernel/rootfs/network configuration, and expose real lifecycle state through `/api/v1`. Until that supervisor is complete, the API and UI should report missing runtime artifacts or unavailable local execution explicitly.
 
 ## License
 
-The repository is currently private while the architecture is stabilized. The intended release model is fully open source under a permissive license after the initial foundation is reviewed.
+The repository is currently private while the architecture is stabilized. The intended release model is fully open source under a permissive license after the foundation is reviewed.

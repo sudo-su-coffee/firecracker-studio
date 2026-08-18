@@ -6,7 +6,7 @@ Build a Docker Desktop-like cross-platform application that makes Firecracker mi
 
 ## Phase 0: Repository and architecture foundation
 
-Create the Wails/Vue application shell, define package boundaries, establish Go formatting and tests, document supported host capabilities, and define the local controller API. The UI must be able to launch even when KVM or Firecracker is unavailable.
+Create the Go web server with embedded Vue application, define package boundaries, establish Go formatting and tests, document supported host capabilities, and define the local controller API. The UI must be able to launch even when KVM or Firecracker is unavailable.
 
 ## Phase 1: Worker protocol and capability discovery
 
@@ -22,9 +22,9 @@ Implement secure layer extraction, architecture checks, base profile selection, 
 
 ## Phase 4: MicroVM lifecycle
 
-Implement worker-side start, stop, restart, delete, logs, port mappings, resource configuration, snapshots, restore, and status. Use the official Firecracker Unix-socket API. Keep privileged operations in the supervisor and expose a narrow typed API to the desktop controller.
+Implement worker-side start, stop, restart, delete, logs, port mappings, resource configuration, snapshots, restore, and status. Use the official Firecracker Unix-socket API. Keep privileged operations in the supervisor and expose a narrow typed API to the web controller.
 
-## Phase 5: Desktop experience
+## Phase 5: Web experience
 
 Build the Vue UI with a modern component library. Provide Dashboard, Images, Convert, MicroVMs, Workers, Snapshots, Logs, Settings, and Diagnostics views. The primary user journey is Import image → Convert → Choose worker → Run → View logs → Map port → Snapshot/restore.
 
@@ -34,7 +34,7 @@ Add worker profiles, secure certificate/token storage, connect/disconnect, capab
 
 ## Phase 7: Packaging and updates
 
-Package the Wails application for Windows and Linux. On Windows, provision or connect to a dedicated WSL2 Linux backend. On Linux, provide native supervisor installation. Add signed update metadata, rollback of application updates, uninstall/reset, logs export, and diagnostic bundle generation.
+Package the Go web server for Windows and Linux. On Windows, provision or connect to a dedicated WSL2 Linux backend. On Linux, provide native supervisor installation. Add signed update metadata, rollback of application updates, uninstall/reset, logs export, and diagnostic bundle generation.
 
 ## Phase 8: Validation
 
@@ -44,32 +44,32 @@ Test OCI parsing and secure extraction with malformed archives, whiteouts, symli
 
 | Release | Scope |
 |---|---|
-| 0.1 | Wails shell, Vue dashboard, local controller, diagnostics, mocked worker |
+| 0.1 | Go web server and Vue UI, Vue dashboard, local controller, diagnostics, mocked worker |
 | 0.2 | Real worker protocol, local Linux supervisor, image inspection and artifact library |
 | 0.3 | Docker/OCI conversion and real Firecracker start/stop on Linux |
 | 0.4 | Windows WSL2 backend and remote worker connectivity |
 | 0.5 | Snapshots, port mappings, logs, exports, signed packaging, and recovery |
-| 1.0 | Stable cross-platform desktop product with compatibility matrix and local/remote Firecracker execution |
+| 1.0 | Stable cross-platform web product with compatibility matrix and local/remote Firecracker execution |
 
 ## Design rules
 
-The desktop UI must never run privileged Firecracker operations directly. The converter must not depend on an external platform. Remote workers must be independently deployable. Every operation must have an explicit state, timeout, cancellation behavior, and useful error. Every artifact must be content-addressed and verified before execution.
+The web UI must never run privileged Firecracker operations directly. The converter must not depend on an external platform. Remote workers must be independently deployable. Every operation must have an explicit state, timeout, cancellation behavior, and useful error. Every artifact must be content-addressed and verified before execution.
 
 ## Production installation and release roadmap
 
-Firecracker Studio should provide one simple installation path per operating system while keeping the runtime architecture explicit. The desktop UI, local controller, Firecracker supervisor, compatible kernel profiles, base artifacts, diagnostics, and update service should be delivered as one product. Firecracker itself remains unmodified; the installer provisions and manages the official runtime and its host integration.
+Firecracker Studio should provide one simple installation path per operating system while keeping the runtime architecture explicit. The web UI, local controller, Firecracker supervisor, compatible kernel profiles, base artifacts, diagnostics, and update service should be delivered as one product. Firecracker itself remains unmodified; the installer provisions and manages the official runtime and its host integration.
 
 | Platform | Primary distribution | User-facing installation |
 |---|---|---|
-| Windows | Signed `.exe` installer, with managed WSL2 Linux backend | Download installer and complete guided setup; optional PowerShell bootstrap command for automation |
+| Windows | Standalone Go web binary, with managed WSL2 Linux runtime | Run the Go binary and open its local browser URL; optional PowerShell bootstrap command for automation |
 | macOS | Signed and notarized `.dmg` plus `.pkg` or Homebrew cask later | Download, install, approve required system permissions, then use remote worker or supported local backend |
 | Linux | `.deb`, `.rpm`, AppImage, and compressed `.tar.gz`; `install.sh` for convenience | Package-manager install for production, `install.sh` for quick setup, archive for portable/manual installs |
 
 The installer must check operating-system version, CPU architecture, hardware virtualization, disk space, memory, KVM or WSL2 availability, TAP/network capability, required permissions, and compatible kernel/base artifacts. It must distinguish automatic setup from administrator actions. A user must be able to install the UI even when local Firecracker execution is unavailable and then connect to a remote worker.
 
-### v0.1.0 — desktop foundation
+### v0.1.0 — web foundation
 
-Deliver the Wails/Vue shell, application settings, dashboard, host capability diagnostics, version display, local state storage, mocked worker connection, and stable project structure. Publish signed development installers for Windows, Linux, and macOS where the build environment permits. This release establishes the update channel and crash/log export format.
+Deliver the Go web server with embedded Vue UI, application settings, dashboard, host capability diagnostics, version display, local state storage, mocked worker connection, and stable project structure. Publish reproducible web-server binaries for Windows and Linux, with a remote-worker path for other hosts where local KVM is unavailable. This release establishes the update channel and crash/log export format.
 
 ### v0.2.0 — worker and image foundation
 
@@ -85,11 +85,11 @@ Add snapshots and restore, artifact export/import, remote artifact transfer or r
 
 ### v0.5.0 — cross-platform release candidate
 
-Stabilize the UI and protocol, add signed Windows installers, signed and notarized macOS artifacts, Linux package repositories and archives, automatic update checks, rollback of failed updates, secure credential storage, worker certificate pinning, release telemetry opt-in, and complete end-to-end acceptance tests. Mark unsupported host capabilities clearly and document all limitations.
+Stabilize the UI and protocol, add signed web-server binaries, signed and notarized macOS artifacts, Linux package repositories and archives, automatic update checks, rollback of failed updates, secure credential storage, worker certificate pinning, release telemetry opt-in, and complete end-to-end acceptance tests. Mark unsupported host capabilities clearly and document all limitations.
 
 ### Final 1.0 release
 
-Release only after the Linux/KVM runtime, Windows WSL2 backend, remote-worker mode, image conversion, snapshots, lifecycle operations, packaging, update flow, security boundaries, and supported image matrix pass acceptance testing. The final release should provide a stable `firecracker-studio install` bootstrap path where appropriate, downloadable installers, reproducible release artifacts, checksums, signatures, release notes, upgrade and uninstall paths, and a documented support matrix.
+Release only after the Linux/KVM runtime, Windows WSL2 backend, remote-worker mode, image conversion, snapshots, lifecycle operations, packaging, update flow, security boundaries, and supported image matrix pass acceptance testing. The final release should provide a stable `firecracker-studio install` bootstrap path where appropriate, downloadable web-server binaries, reproducible release artifacts, checksums, signatures, release notes, upgrade and uninstall paths, and a documented support matrix.
 
 ### One-line installation model
 

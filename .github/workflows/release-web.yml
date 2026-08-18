@@ -1,0 +1,81 @@
+name: Firecracker Studio Web Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version, for example v1.1.0
+        required: true
+        type: string
+      publish:
+        description: Publish the GitHub release after build validation
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build embedded Go web binaries
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            suffix: linux-amd64
+          - goos: windows
+            goarch: amd64
+            suffix: windows-amd64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --prefix frontend
+      - run: npm run build --prefix frontend
+      - name: Embed Vue assets
+        shell: bash
+        run: rm -rf internal/web/dist && mkdir -p internal/web/dist && cp -R frontend/dist/. internal/web/dist/
+      - name: Validate version
+        shell: bash
+        run: |
+          version="${{ inputs.version }}"
+          [[ "$version" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "invalid version"; exit 1; }
+      - name: Build binary
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          extension=""
+          [ "$GOOS" = "windows" ] && extension=".exe"
+          go build -trimpath -ldflags "-s -w -X main.version=${{ inputs.version }}" -o "FirecrackerStudio-${{ matrix.suffix }}${extension}" ./cmd/firecracker-studio
+      - name: Generate checksum
+        shell: bash
+        run: sha256sum FirecrackerStudio-${{ matrix.suffix }}* > SHA256SUMS-${{ matrix.suffix }}.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firecracker-studio-${{ inputs.version }}-${{ matrix.suffix }}
+          path: |
+            FirecrackerStudio-${{ matrix.suffix }}*
+            SHA256SUMS-${{ matrix.suffix }}.txt
+      - name: Publish release assets
+        if: ${{ inputs.publish }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.version }}
+          name: Firecracker Studio ${{ inputs.version }}
+          generate_release_notes: true
+          prerelease: false
+          files: |
+            FirecrackerStudio-${{ matrix.suffix }}*
+            SHA256SUMS-${{ matrix.suffix }}.txt

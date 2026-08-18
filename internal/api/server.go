@@ -2,6 +2,8 @@ package api
 
 import (
 	"fmt"
+	"os"
+
 	"github.com/sudo-su-coffee/firecracker-studio/internal/images"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/operations"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/worker"
@@ -50,10 +52,30 @@ func New(ops *operations.Manager, catalog *images.Catalog, workers *worker.Servi
 	return server, nil
 }
 
-func (s *Server) Handler() func(*fasthttp.RequestCtx) { return s.app.Handler() }
+func (s *Server) Handler() func(*fasthttp.RequestCtx) {
+	handler := s.app.Handler()
+	return func(ctx *fasthttp.RequestCtx) {
+		origin := string(ctx.Request.Header.Peek("Origin"))
+		allowed := os.Getenv("FIRECRACKER_STUDIO_CORS_ORIGIN")
+		if allowed == "" {
+			allowed = "http://localhost:5173"
+		}
+		if origin == allowed {
+			ctx.Response.Header.Set("Access-Control-Allow-Origin", origin)
+			ctx.Response.Header.Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			ctx.Response.Header.Set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
+			ctx.Response.Header.Set("Vary", "Origin")
+		}
+		if ctx.IsOptions() {
+			ctx.SetStatusCode(http.StatusNoContent)
+			return
+		}
+		handler(ctx)
+	}
+}
 
 func (s *Server) ListenAndServe(address string) error {
-	return s.app.ListenAndServe(address, "", nil)
+	return fasthttp.ListenAndServe(address, s.Handler())
 }
 
 func requestLogger(log *slog.Logger) fastglue.FastMiddleware {

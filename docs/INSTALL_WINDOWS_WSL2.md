@@ -1,27 +1,39 @@
 # Firecracker Studio Installation
 
-## Current release status
+Firecracker Studio is now a **single Go web server with an embedded Vue UI**. It does not require a separate desktop shell or browser runtime installation. The same binary runs on Linux, WSL2, Windows, and remote Linux hosts; Firecracker execution itself remains on Linux/WSL2 where KVM is available.
 
-Windows v1.0.0 has been published as a GitHub Release. The release contains the NSIS installer, the standalone executable, and SHA256 checksums.
+## Build the pure Go web binary
 
-## Windows developer/build command
+From the repository root:
 
-From a Windows machine with Go, Node.js, Wails, and NSIS installed:
-
-```powershell
-$env:PATH += ";$env:USERPROFILE\go\bin"
-wails build -clean -platform windows/amd64 -nsis -ldflags "-X main.version=v0.1.0"
+```bash
+npm ci --prefix frontend
+npm run build --prefix frontend
+rm -rf internal/web/dist
+mkdir -p internal/web/dist
+cp -R frontend/dist/. internal/web/dist/
+go build -trimpath -ldflags '-s -w' -o firecracker-studio ./cmd/firecracker-studio
 ```
 
-The generated installer is placed in `build/bin`. Wails uses NSIS to create the installer, and the application itself is a desktop executable rather than a web application.
+Start the unified application:
 
-For a release from GitHub Actions, open **Actions → Windows Release → Run workflow**, enter a version such as `v0.1.0`, and start the workflow. The current end-user command is:
-
-```powershell
-irm https://github.com/sudo-su-coffee/firecracker-studio/releases/latest/download/FirecrackerStudioInstaller.exe -OutFile "$env:TEMP\FirecrackerStudioInstaller.exe"; Start-Process "$env:TEMP\FirecrackerStudioInstaller.exe"
+```bash
+FIRECRACKER_STUDIO_LISTEN=127.0.0.1:7822 ./firecracker-studio
 ```
 
-The published v1.0.0 assets are available from the [GitHub release page](https://github.com/sudo-su-coffee/firecracker-studio/releases/tag/v1.0.0). The SHA256 file should be downloaded and checked before distributing the installer through another channel.
+Open the Vue UI at:
+
+```text
+http://127.0.0.1:7822
+```
+
+The API is served by the same process under `/api/v1`. The health endpoint is:
+
+```text
+http://127.0.0.1:7822/api/v1/health
+```
+
+GitHub Actions now builds the pure Go web binaries from **Actions → Firecracker Studio Web Release → Run workflow**. The release assets are standalone binaries, not installers.
 
 ## End-user Windows requirements
 
@@ -118,11 +130,9 @@ A remote Firecracker worker is optional. To add one, open **Servers → Add remo
 
 ## Important distinction
 
-The `.exe` is the Firecracker Studio desktop application. On Windows, the local runtime is installed inside WSL2 Ubuntu; on native Linux, it is installed directly into the Studio runtime directory. Remote Linux workers are optional and can be added through the server manager with their authenticated HTTP or HTTPS URL.
+The Windows binary is the Firecracker Studio web server. Open its local URL in a browser. On Windows, the Firecracker runtime is installed inside WSL2 Ubuntu; on native Linux, it is installed directly into the Studio runtime directory. Remote Linux workers are optional and can be added through the server manager with their authenticated HTTP or HTTPS URL.
 
 ## References
 
-[1]: https://wails.io/docs/guides/windows-installer/ "Wails NSIS installer"
-[2]: https://wails.io/docs/gettingstarted/installation "Wails installation requirements"
 [3]: https://learn.microsoft.com/en-us/windows/wsl/install "Microsoft WSL installation"
 [4]: https://github.com/firecracker-microvm/firecracker/blob/main/docs/getting-started.md "Firecracker getting started"

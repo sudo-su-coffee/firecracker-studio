@@ -39,8 +39,8 @@ jobs:
       - run: npm ci
       - run: npm run build
 
-  linux-desktop:
-    name: Linux Wails build
+  web-binary:
+    name: Embedded Vue web binary
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -53,8 +53,13 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - name: Install Wails Linux dependencies
-        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev pkg-config
-      - run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.9.2
       - run: npm ci --prefix frontend
-      - run: wails build -clean -platform linux/amd64 -tags webkit2_41
+      - run: npm run build --prefix frontend
+      - name: Copy Vue assets into Go embed directory
+        run: rm -rf internal/web/dist && mkdir -p internal/web/dist && cp -R frontend/dist/. internal/web/dist/
+      - run: go build -trimpath -ldflags "-s -w" -o firecracker-studio-linux-amd64 ./cmd/firecracker-studio
+      - run: ./firecracker-studio-linux-amd64 --help >/dev/null 2>&1 || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firecracker-studio-linux-amd64
+          path: firecracker-studio-linux-amd64

@@ -1,36 +1,45 @@
 # Firecracker Studio Update Strategy
 
-## Windows desktop application
+## Go web-server binaries
 
-Firecracker Studio should use GitHub Releases as the public distribution channel. Every release must contain a versioned NSIS installer, a standalone executable, and a SHA256 checksum file. The application can check a small release metadata endpoint on startup or from **Settings → Updates**, compare the current semantic version with the latest stable release, and show a non-blocking update banner.
+Firecracker Studio is distributed as a versioned Go web-server binary with embedded Vue assets. Each release should contain checksummed binaries for supported operating systems and architectures, together with release notes and a machine-readable manifest.
 
-The update must be user-approved. The user can download the installer, verify its checksum, close Firecracker Studio, and run the installer. NSIS can install the new version over the existing installation while preserving the user’s server profiles and desktop preferences. The application should never silently replace its own executable or execute an unverified download.
+The application update is user-approved. The user downloads the new binary, verifies its checksum, stops the old process, replaces the binary, and starts the new version. Runtime state, images, volumes, snapshots, and Firecracker artifacts must remain outside the binary in the Studio state directory.
 
 ## Recommended update flow
 
 | Stage | Behavior |
 |---|---|
-| Check | Query the latest stable GitHub Release metadata on startup or manually |
-| Notify | Show the available version, release notes, and download size |
-| Approve | User chooses **Download update** or ignores it |
+| Check | Query the latest stable GitHub Release metadata manually or from the Settings page |
+| Notify | Show the available version, release notes, compatibility requirements, and download size |
+| Approve | User chooses **Download update** |
 | Verify | Check HTTPS download and SHA256 against the release checksum file |
-| Install | Close the app and launch the signed NSIS installer |
-| Recover | Keep the previous installation available until the new installer succeeds |
+| Stop | Stop the Go web server gracefully |
+| Replace | Atomically replace the binary while retaining the state directory |
+| Recover | Keep the previous binary available until the new process passes its health check |
 
-## Signing
+The update mechanism must never execute an unverified download or silently replace a running runtime binary.
 
-Before broad distribution, Windows installers should be Authenticode-signed with a certificate owned by BlackLoverTech. Signing reduces SmartScreen friction and lets users verify publisher identity. Signing credentials must remain in GitHub Actions secrets and must never be committed to the repository.
+## Runtime updates
 
-## Worker updates
+The Go web server and local Firecracker runtime are separate update concerns. Updating the web binary must not silently replace Firecracker, jailer, kernels, rootfs images, volumes, snapshots, or running microVMs. A runtime update should be explicit, display compatibility and restart impact, verify its checksum, and preserve rollback state.
 
-The desktop application and its local Firecracker runtime are separate update concerns. Updating the Windows UI must not silently replace the user’s WSL2 runtime, Firecracker binary, jailer, kernel, rootfs, volumes, or running microVMs. A runtime update should be an explicit operation that displays the target version, compatibility requirements, restart impact, and rollback plan.
+For remote Firecracker workers, Studio should show the worker version and compatibility range. It should warn when the web UI and worker are incompatible but must not force an update. A remote worker is updated independently by its operator.
 
-For remote Firecracker workers, the worker can expose a version and compatibility range. Studio should warn when the UI and worker versions are incompatible, but it should not force an update. For the local WSL2 runtime, Studio should provide a user-approved, signed, transactional runtime update that preserves images, volumes, snapshots, and running-workload safety.
+For local Linux/WSL2 hosts, the runtime bootstrap can be rerun with a pinned `FIRECRACKER_VERSION` after the user approves the operation:
+
+```bash
+FIRECRACKER_VERSION=v1.16.1 bash scripts/install-runtime.sh
+```
+
+## Signing and release artifacts
+
+Before broad distribution, binaries should be signed for each target platform and accompanied by SBOM and provenance metadata. Signing credentials must remain in CI secrets and must never be committed to the repository.
 
 ## Release channels
 
-The stable channel should use tags such as `v1.0.1`. A preview channel can use prereleases such as `v1.1.0-rc.1`, but preview releases must never replace the stable update path. Release notes should clearly distinguish desktop changes, worker changes, Firecracker compatibility changes, and known host limitations.
+The stable channel should use tags such as `v1.1.0`. A preview channel can use prereleases such as `v1.2.0-rc.1`, but preview releases must never replace the stable update path. Release notes should distinguish web-server changes, Vue UI changes, runtime changes, Firecracker compatibility changes, and known host limitations.
 
-## Current release
+## Current release model
 
-Windows v1.0.1 is published at https://github.com/sudo-su-coffee/firecracker-studio/releases/tag/v1.0.1. The current release includes the manual remote-worker connection flow, local runtime installer, and first-run onboarding panel. It does not yet contain an in-app update checker or Authenticode signing.
+The active release workflow is `.github/workflows/release-web.yml`. It builds the Vue assets, embeds them into the Go binary, and produces Linux AMD64 and Windows AMD64 web-server binaries. The Windows binary serves the browser UI; Firecracker execution remains in WSL2 or a remote Linux worker.

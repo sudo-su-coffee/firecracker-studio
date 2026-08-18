@@ -12,11 +12,18 @@ import (
 	"github.com/sudo-su-coffee/firecracker-studio/internal/converter"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/images"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/operations"
+	"github.com/sudo-su-coffee/firecracker-studio/internal/web"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/worker"
+	"github.com/valyala/fasthttp"
 )
+
+var version = "dev"
 
 func main() {
 	cfg := config.Default()
+	if address := os.Getenv("FIRECRACKER_STUDIO_LISTEN"); address != "" {
+		cfg.ListenAddress = address
+	}
 	if err := cfg.Validate(); err != nil {
 		panic(err)
 	}
@@ -38,14 +45,15 @@ func main() {
 		log.Error("failed to initialize worker service", "error", err)
 		os.Exit(1)
 	}
-	server, err := api.New(ops, catalog, workerService, log)
+	apiServer, err := api.New(ops, catalog, workerService, log)
 	if err != nil {
 		log.Error("failed to initialize api", "error", err)
 		os.Exit(1)
 	}
-	log.Info("starting Firecracker Studio backend", "address", cfg.ListenAddress)
-	if err := server.ListenAndServe(cfg.ListenAddress); err != nil {
-		log.Error("backend stopped", "error", err)
+
+	log.Info("starting Firecracker Studio web server", "address", cfg.ListenAddress, "version", version)
+	if err := fasthttp.ListenAndServe(cfg.ListenAddress, web.Handler(apiServer.Handler())); err != nil {
+		log.Error("web server stopped", "error", err)
 		os.Exit(1)
 	}
 }
