@@ -2,8 +2,10 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -51,5 +53,20 @@ func (c Config) Validate() error {
 	if c.OperationWorkers < 1 || c.OperationWorkers > 128 {
 		return fmt.Errorf("operation workers must be between 1 and 128")
 	}
+	if !loopbackAddress(c.ListenAddress) && strings.TrimSpace(os.Getenv("FIRECRACKER_STUDIO_TOKEN")) == "" {
+		return fmt.Errorf("non-loopback listen address requires FIRECRACKER_STUDIO_TOKEN")
+	}
 	return nil
+}
+
+func loopbackAddress(address string) bool {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return address == "localhost"
+	}
+	if host == "localhost" || host == "" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }

@@ -19,7 +19,7 @@ import (
 	"github.com/valyala/fasthttp"
 )
 
-var version = "dev"
+var version = "1.4.0"
 
 func main() {
 	cfg := config.Default()
@@ -50,7 +50,7 @@ func main() {
 		log.Error("failed to initialize worker service", "error", err)
 		os.Exit(1)
 	}
-	apiServer, err := api.New(ops, catalog, workerService, log)
+	apiServer, err := api.New(ops, catalog, workerService, runtimeStatus, log)
 	if err != nil {
 		log.Error("failed to initialize api", "error", err)
 		os.Exit(1)

@@ -2,15 +2,17 @@ package api
 
 import (
 	"bufio"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/sudo-su-coffee/firecracker-studio/internal/images"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/operations"
+	studiort "github.com/sudo-su-coffee/firecracker-studio/internal/runtime"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/worker"
 	"github.com/valyala/fasthttp"
 	"github.com/zerodha/fastglue"
@@ -19,13 +21,13 @@ import (
 )
 
 type Server struct {
-	app         *fastglue.Fastglue
-	ops         *operations.Manager
-	catalog     *images.Catalog
-	workers     *worker.Service
-	marketplace *images.Marketplace
-	eventsMu    sync.RWMutex
-	events      []string
+	app           *fastglue.Fastglue
+	ops           *operations.Manager
+	catalog       *images.Catalog
+	workers       *worker.Service
+	runtimeStatus studiort.Status
+	eventsMu      sync.RWMutex
+	events        []string
 }
 
 type hostMetrics struct {
@@ -54,7 +56,7 @@ type metricsSnapshot struct {
 	Host       hostMetrics `json:"host"`
 }
 
-func New(ops *operations.Manager, catalog *images.Catalog, workers *worker.Service, log *slog.Logger) (*Server, error) {
+func New(ops *operations.Manager, catalog *images.Catalog, workers *worker.Service, runtimeStatus studiort.Status, log *slog.Logger) (*Server, error) {
 	if ops == nil {
 		return nil, fmt.Errorf("operation manager is required")
 	}
@@ -68,16 +70,13 @@ func New(ops *operations.Manager, catalog *images.Catalog, workers *worker.Servi
 		log = slog.Default()
 	}
 	app := fastglue.New()
-	base, _ := os.UserConfigDir()
-	runtimeRoot := filepath.Join(base, "FirecrackerStudio", "runtime")
-	server := &Server{app: app, ops: ops, catalog: catalog, workers: workers, marketplace: images.NewMarketplace(runtimeRoot, os.Getenv("FIRECRACKER_STUDIO_MARKETPLACE_URL")), events: make([]string, 0, 100)}
+	server := &Server{app: app, ops: ops, catalog: catalog, workers: workers, runtimeStatus: runtimeStatus, events: make([]string, 0, 100)}
 	app.After(server.requestLogger(log))
 	app.GET("/api/v1/health", server.health)
 	app.GET("/api/v1/metrics", server.metrics)
 	app.GET("/api/v1/logs", server.logs)
 	app.GET("/api/v1/base-images", server.listBaseImages)
-	app.GET("/api/v1/marketplace/images", server.listMarketplaceImages)
-	app.POST("/api/v1/marketplace/images/{id}/pull", server.pullMarketplaceImage)
+	app.GET("/api/v1/readiness", server.readiness)
 	app.GET("/api/v1/images", server.listImages(catalog))
 	app.POST("/api/v1/images", server.registerImage(catalog))
 	app.POST("/api/v1/conversions", server.enqueueConversion(ops, catalog))
@@ -86,6 +85,7 @@ func New(ops *operations.Manager, catalog *images.Catalog, workers *worker.Servi
 	app.POST("/api/v1/vms", server.createVM(workers))
 	app.POST("/api/v1/vms/{id}/start", server.startVM(workers))
 	app.POST("/api/v1/vms/{id}/stop", server.stopVM(workers))
+	app.DELETE("/api/v1/vms/{id}", server.deleteVM(workers))
 	app.POST("/api/v1/vms/{id}/snapshots", server.createSnapshot(workers))
 	app.POST("/api/v1/vms/{id}/snapshots/restore", server.restoreSnapshot(workers))
 	app.GET("/api/v1/operations/{id}", server.getOperation(ops))
@@ -98,6 +98,12 @@ func New(ops *operations.Manager, catalog *images.Catalog, workers *worker.Servi
 func (s *Server) Handler() func(*fasthttp.RequestCtx) {
 	handler := s.app.Handler()
 	return func(ctx *fasthttp.RequestCtx) {
+		if !s.authorized(ctx) {
+			ctx.SetStatusCode(http.StatusUnauthorized)
+			ctx.Response.Header.SetContentType("application/json")
+			ctx.SetBodyString(`{"error":"unauthorized","message":"provide FIRECRACKER_STUDIO_TOKEN as a Bearer token"}`)
+			return
+		}
 		if string(ctx.Path()) == "/api/v1/metrics/stream" {
 			s.metricsStream(ctx)
 			return
@@ -125,6 +131,19 @@ func (s *Server) ListenAndServe(address string) error {
 	return fasthttp.ListenAndServe(address, s.Handler())
 }
 
+func (s *Server) authorized(ctx *fasthttp.RequestCtx) bool {
+	token := strings.TrimSpace(os.Getenv("FIRECRACKER_STUDIO_TOKEN"))
+	if token == "" {
+		return true
+	}
+	if string(ctx.Path()) == "/api/v1/health" && ctx.IsGet() {
+		return true
+	}
+	want := "Bearer " + token
+	got := string(ctx.Request.Header.Peek("Authorization"))
+	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
+}
+
 func (s *Server) requestLogger(log *slog.Logger) fastglue.FastMiddleware {
 	return func(r *fastglue.Request) *fastglue.Request {
 		method := string(r.RequestCtx.Method())
@@ -142,7 +161,13 @@ func (s *Server) requestLogger(log *slog.Logger) fastglue.FastMiddleware {
 }
 
 func (s *Server) health(r *fastglue.Request) error {
-	return r.SendJSON(http.StatusOK, map[string]string{"status": "ok", "service": "firecracker-studio"})
+	return r.SendJSON(http.StatusOK, map[string]string{"status": "ok", "service": "firecracker-studio", "version": "1.4.0"})
+}
+
+func (s *Server) readiness(r *fastglue.Request) error {
+	status := s.runtimeStatus
+	ready := status.Installed && status.KVM == "ready" && status.Kernel == "present" && status.Rootfs == "present"
+	return r.SendJSON(http.StatusOK, map[string]any{"ready": ready, "runtime": status, "message": status.Message})
 }
 
 func (s *Server) logs(r *fastglue.Request) error {
@@ -199,31 +224,6 @@ func (s *Server) metricsStream(ctx *fasthttp.RequestCtx) {
 
 func (s *Server) listBaseImages(r *fastglue.Request) error {
 	return r.SendJSON(http.StatusOK, map[string]any{"images": images.ManagedBaseImages()})
-}
-
-func (s *Server) listMarketplaceImages(r *fastglue.Request) error {
-	items, err := s.marketplace.List(r.RequestCtx)
-	if err != nil {
-		return r.SendJSON(http.StatusBadGateway, map[string]string{"error": "marketplace_unavailable", "message": err.Error()})
-	}
-	return r.SendJSON(http.StatusOK, map[string]any{"images": items, "source": s.marketplace.CatalogURL})
-}
-
-func (s *Server) pullMarketplaceImage(r *fastglue.Request) error {
-	id := fmt.Sprint(r.RequestCtx.UserValue("id"))
-	if id == "" || id == "<nil>" {
-		return r.SendJSON(http.StatusBadRequest, map[string]string{"error": "image_id_required"})
-	}
-	item, dir, err := s.marketplace.Pull(r.RequestCtx, id)
-	if err != nil {
-		return r.SendJSON(http.StatusBadRequest, map[string]string{"error": "image_pull_failed", "message": err.Error()})
-	}
-	digest := "sha256:" + item.KernelSHA256
-	stored, err := s.catalog.Upsert(images.Image{ID: item.ID, Reference: item.Name, SourceType: "marketplace", Digest: digest, Architecture: item.Architecture, BaseProfile: item.Distribution, ArtifactPath: dir, Verified: true})
-	if err != nil {
-		return r.SendJSON(http.StatusInternalServerError, map[string]string{"error": "image_register_failed", "message": err.Error()})
-	}
-	return r.SendJSON(http.StatusCreated, map[string]any{"image": stored, "marketplace": item, "directory": dir, "status": "downloaded"})
 }
 
 func (s *Server) listImages(catalog *images.Catalog) fastglue.FastRequestHandler {
@@ -301,6 +301,19 @@ func (s *Server) createVM(service *worker.Service) fastglue.FastRequestHandler {
 
 func (s *Server) startVM(service *worker.Service) fastglue.FastRequestHandler {
 	return s.vmAction(service, true)
+}
+
+func (s *Server) deleteVM(service *worker.Service) fastglue.FastRequestHandler {
+	return func(r *fastglue.Request) error {
+		id := fmt.Sprint(r.RequestCtx.UserValue("id"))
+		if id == "" || id == "<nil>" {
+			return r.SendJSON(http.StatusBadRequest, map[string]string{"error": "vm_id_required"})
+		}
+		if err := service.Delete(id); err != nil {
+			return r.SendJSON(http.StatusBadRequest, map[string]string{"error": "vm_delete_failed", "message": err.Error()})
+		}
+		return r.SendJSON(http.StatusOK, map[string]string{"status": "deleted", "vmId": id})
+	}
 }
 
 func (s *Server) stopVM(service *worker.Service) fastglue.FastRequestHandler {

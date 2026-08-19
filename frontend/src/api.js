@@ -94,13 +94,11 @@ export const MetricsStream = (onMessage, onError) => {
   return source
 }
 export const BaseImages = call('BaseImages', () => webRequest('/base-images').catch(() => ({ images: demoBases })))
-export const MarketplaceImages = call('MarketplaceImages', () => webRequest('/marketplace/images'))
-export const PullMarketplaceImage = call('PullMarketplaceImage', id => webRequest(`/marketplace/images/${encodeURIComponent(id)}/pull`, { method: 'POST', body: '{}' }))
 export const Images = call('Images', () => webRequest('/images'))
 export const Operations = call('Operations', () => webRequest('/operations'))
 export const VMs = call('VMs', () => webRequest('/vms'))
 export const Convert = call('Convert', (source, sourceType, baseProfile) => webRequest('/conversions', { method: 'POST', body: JSON.stringify({ source, sourceType, baseProfile, architecture: 'native' }) }))
 export const CreateVM = call('CreateVM', (artifactDigest, vcpus, memoryMiB, imageReference = '', portMappings = []) => webRequest('/vms', { method: 'POST', body: JSON.stringify({ artifactDigest, imageReference, vcpus, memoryMiB, portMappings }) }))
 export const VMAction = call('VMAction', (id, action) => webRequest(`/vms/${encodeURIComponent(id)}/${action}`, { method: 'POST', body: '{}' }))
-export const Snapshot = call('Snapshot', (id, action, snapshotPath, memoryPath) => webRequest(`/vms/${encodeURIComponent(id)}/snapshots${action === 'restore' ? '/restore' : ''}`, { method: 'POST', body: JSON.stringify({ snapshotPath, memoryPath }) }))
-export const RuntimeStatus = call('RuntimeStatus', () => ({ platform: 'web', installed: false, firecracker: 'managed by Linux runtime', jailer: 'managed by Linux runtime', kvm: 'runtime API', tap: 'runtime API', kernel: 'catalog', rootfs: 'catalog', message: 'Web mode is connected to the Firecracker Studio runtime API' }))
+export const DeleteVM = call('DeleteVM', id => webRequest(`/vms/${encodeURIComponent(id)}`, { method: 'DELETE' }))
+export const RuntimeStatus = call('RuntimeStatus', () => webRequest('/readiness').then(result => ({ platform: 'web', installed: result.runtime?.installed, firecracker: result.runtime?.firecracker, jailer: result.runtime?.jailer, kvm: result.runtime?.kvm, tap: result.runtime?.tap, kernel: result.runtime?.kernel, rootfs: result.runtime?.rootfs, ready: result.ready, message: result.message })))

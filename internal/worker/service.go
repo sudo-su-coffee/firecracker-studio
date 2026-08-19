@@ -48,6 +48,20 @@ func (s *Service) Create(ctx context.Context, req VMRequest) (VM, error) {
 	if req.MemoryMiB <= 0 {
 		req.MemoryMiB = 512
 	}
+	if req.VCPUs > 32 {
+		return VM{}, fmt.Errorf("vcpus must be between 1 and 32")
+	}
+	if req.MemoryMiB > 262144 {
+		return VM{}, fmt.Errorf("memoryMiB must not exceed 262144")
+	}
+	for _, port := range req.PortMappings {
+		if port.HostPort < 1 || port.HostPort > 65535 || port.GuestPort < 1 || port.GuestPort > 65535 {
+			return VM{}, fmt.Errorf("port mappings must be between 1 and 65535")
+		}
+		if port.Protocol != "" && port.Protocol != "tcp" && port.Protocol != "udp" {
+			return VM{}, fmt.Errorf("unsupported port protocol %q", port.Protocol)
+		}
+	}
 	id := uuid.NewString()
 	socket, err := s.factory.NewSocket(id)
 	if err != nil {
@@ -136,6 +150,10 @@ func (s *Service) Stop(ctx context.Context, id string) (VM, error) {
 			_ = proc.Process.Kill()
 			delete(s.processes, id)
 		}
+		current := s.vms[id]
+		current.State = "stopped"
+		current.UpdatedAt = time.Now().UTC()
+		s.vms[id] = current
 		s.mu.Unlock()
 	}()
 	return updated, nil
@@ -177,6 +195,26 @@ func (s *Service) RestoreSnapshot(ctx context.Context, id, snapshotPath, memPath
 		_ = s.appendLog(id, vm, message)
 	}
 	return err
+}
+
+func (s *Service) Delete(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.vms[id]; !ok {
+		return fmt.Errorf("VM %q not found", id)
+	}
+	if proc := s.processes[id]; proc != nil && proc.Process != nil {
+		_ = proc.Process.Kill()
+	}
+	delete(s.processes, id)
+	delete(s.clients, id)
+	delete(s.vms, id)
+	if factory, ok := s.factory.(DirectorySocketFactory); ok {
+		if err := os.RemoveAll(filepath.Join(factory.Dir, id)); err != nil {
+			return fmt.Errorf("remove VM runtime directory: %w", err)
+		}
+	}
+	return nil
 }
 
 func (s *Service) Get(id string) (VM, bool) {
