@@ -1,6 +1,6 @@
 <script setup>
 import { onMounted, onBeforeUnmount, reactive, ref, computed } from 'vue'
-import { Servers, AddServer, CheckServer, RemoveServer, SwitchServer, SetConnection, Health, MetricsStream, BaseImages, Images, Operations, VMs, Convert, CreateVM, VMAction, DeleteVM, RuntimeStatus, Logs } from './api'
+import { Servers, AddServer, CheckServer, RemoveServer, SwitchServer, SetConnection, SetAuthToken, Health, MetricsStream, BaseImages, Images, Operations, VMs, Convert, CreateVM, VMAction, DeleteVM, RuntimeStatus, Logs } from './api'
 
 const tabs = [
   { id: 'overview', label: 'Dashboard', icon: '⌂' },
@@ -8,7 +8,7 @@ const tabs = [
   { id: 'vms', label: 'Workloads', icon: '▣' },
   { id: 'convert', label: 'Convert', icon: '⇄' },
 ]
-const state = reactive({ tab: 'overview', connectionURL: '', source: 'alpine:latest', sourceType: 'oci', baseProfile: 'alpine', imageName: '', artifactDigest: '', vcpus: 1, memoryMiB: 512, hostPort: 15432, guestPort: 5432, protocol: 'tcp', selectedVM: null, serverID: '', showAddWorker: false, newServer: { name: 'Remote worker', url: '', kind: 'remote', username: '', token: '' } })
+const state = reactive({ tab: 'overview', connectionURL: '', source: 'alpine:latest', sourceType: 'oci', baseProfile: 'alpine', imageName: '', artifactDigest: '', vcpus: 1, memoryMiB: 512, hostPort: 15432, guestPort: 5432, protocol: 'tcp', selectedVM: null, apiToken: localStorage.getItem('firecracker-studio.api-token') || '', serverID: '', showAddWorker: false, newServer: { name: 'Remote worker', url: '', kind: 'remote', username: '', token: '' } })
 const data = reactive({ health: null, baseImages: [], images: [], operations: [], vms: [], servers: [], logs: [], pull: null, message: '', runtime: {}, metrics: { workers: 0, microvms: 0, runningVms: 0, images: 0, operations: 0, timestamp: null, host: {} } })
 const busy = ref(false)
 const selectedVM = computed(() => data.vms.find(vm => vm.id === state.selectedVM) || data.vms[0])
@@ -18,6 +18,7 @@ const browserInfo = { protocol: window.location.protocol.replace(':', ''), host:
 function formatBytes(value = 0) { if (!value) return '0 B'; const units = ['B', 'KB', 'MB', 'GB', 'TB']; const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1); return `${(value / 1024 ** index).toFixed(index ? 1 : 0)} ${units[index]}` }
 let metricsSource
 let refreshTimer
+function saveToken() { SetAuthToken(state.apiToken); data.message = state.apiToken ? 'API token saved for this browser' : 'API token cleared'; connectMetrics(); refresh() }
 function connectMetrics() {
   metricsSource?.close()
   metricsSource = MetricsStream(metrics => { data.metrics = metrics }, () => {})
@@ -95,6 +96,7 @@ async function deleteVM(id) { if (!window.confirm('Delete this microVM and its m
 function openVM(vm) { state.selectedVM = vm.id; state.tab = 'vms' }
 
 onMounted(async () => {
+  SetAuthToken(state.apiToken)
   connectMetrics()
   data.servers = await Servers() || []
   const active = data.servers.find(server => server.active) || data.servers[0]
@@ -115,7 +117,7 @@ onBeforeUnmount(() => { metricsSource?.close(); if (refreshTimer) window.clearIn
     </aside>
 
     <main class="main-area">
-      <header class="topbar"><div><p class="eyebrow">{{ tabs.find(tab => tab.id === state.tab)?.label.toUpperCase() }}</p><h1>{{ state.tab === 'overview' ? 'Workspace' : tabs.find(tab => tab.id === state.tab)?.label }}</h1></div></header>
+      <header class="topbar"><div><p class="eyebrow">{{ tabs.find(tab => tab.id === state.tab)?.label.toUpperCase() }}</p><h1>{{ state.tab === 'overview' ? 'Workspace' : tabs.find(tab => tab.id === state.tab)?.label }}</h1></div><div class="token-control"><label>API token<input v-model="state.apiToken" type="password" placeholder="Only needed for protected hosts" @keyup.enter="saveToken" /></label><button class="ghost small" @click="saveToken">Save</button></div></header>
 
       <div class="content">
         <template v-if="state.tab === 'overview'">

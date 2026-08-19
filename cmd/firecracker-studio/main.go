@@ -50,7 +50,7 @@ func main() {
 		log.Error("failed to initialize worker service", "error", err)
 		os.Exit(1)
 	}
-	apiServer, err := api.New(ops, catalog, workerService, runtimeStatus, log)
+	apiServer, err := api.New(ops, catalog, workerService, runtimeStatus, defaultKernel, log)
 	if err != nil {
 		log.Error("failed to initialize api", "error", err)
 		os.Exit(1)

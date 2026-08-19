@@ -26,6 +26,7 @@ type Server struct {
 	catalog       *images.Catalog
 	workers       *worker.Service
 	runtimeStatus studiort.Status
+	defaultKernel string
 	eventsMu      sync.RWMutex
 	events        []string
 }
@@ -56,7 +57,7 @@ type metricsSnapshot struct {
 	Host       hostMetrics `json:"host"`
 }
 
-func New(ops *operations.Manager, catalog *images.Catalog, workers *worker.Service, runtimeStatus studiort.Status, log *slog.Logger) (*Server, error) {
+func New(ops *operations.Manager, catalog *images.Catalog, workers *worker.Service, runtimeStatus studiort.Status, defaultKernel string, log *slog.Logger) (*Server, error) {
 	if ops == nil {
 		return nil, fmt.Errorf("operation manager is required")
 	}
@@ -70,7 +71,7 @@ func New(ops *operations.Manager, catalog *images.Catalog, workers *worker.Servi
 		log = slog.Default()
 	}
 	app := fastglue.New()
-	server := &Server{app: app, ops: ops, catalog: catalog, workers: workers, runtimeStatus: runtimeStatus, events: make([]string, 0, 100)}
+	server := &Server{app: app, ops: ops, catalog: catalog, workers: workers, runtimeStatus: runtimeStatus, defaultKernel: defaultKernel, events: make([]string, 0, 100)}
 	app.After(server.requestLogger(log))
 	app.GET("/api/v1/health", server.health)
 	app.GET("/api/v1/metrics", server.metrics)
@@ -82,7 +83,7 @@ func New(ops *operations.Manager, catalog *images.Catalog, workers *worker.Servi
 	app.POST("/api/v1/conversions", server.enqueueConversion(ops, catalog))
 	app.GET("/api/v1/operations", server.listOperations(ops))
 	app.GET("/api/v1/vms", server.listVMs(workers))
-	app.POST("/api/v1/vms", server.createVM(workers))
+	app.POST("/api/v1/vms", server.createVM(workers, ops, catalog))
 	app.POST("/api/v1/vms/{id}/start", server.startVM(workers))
 	app.POST("/api/v1/vms/{id}/stop", server.stopVM(workers))
 	app.DELETE("/api/v1/vms/{id}", server.deleteVM(workers))
@@ -141,6 +142,11 @@ func (s *Server) authorized(ctx *fasthttp.RequestCtx) bool {
 	}
 	want := "Bearer " + token
 	got := string(ctx.Request.Header.Peek("Authorization"))
+	if got == "" {
+		if queryToken := string(ctx.QueryArgs().Peek("access_token")); queryToken != "" {
+			got = "Bearer " + queryToken
+		}
+	}
 	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
 }
 
@@ -285,11 +291,33 @@ func (s *Server) listVMs(service *worker.Service) fastglue.FastRequestHandler {
 	}
 }
 
-func (s *Server) createVM(service *worker.Service) fastglue.FastRequestHandler {
+func (s *Server) createVM(service *worker.Service, ops *operations.Manager, catalog *images.Catalog) fastglue.FastRequestHandler {
 	return func(r *fastglue.Request) error {
 		var req worker.VMRequest
 		if err := r.Decode(&req, "json"); err != nil {
 			return r.SendJSON(http.StatusBadRequest, map[string]string{"error": "invalid_request", "message": err.Error()})
+		}
+		if req.KernelPath == "" || req.RootfsPath == "" {
+			if image, ok := catalog.Get(req.ArtifactDigest); ok {
+				req.RootfsPath = image.ArtifactPath
+			}
+			for _, op := range ops.List() {
+				if op.Artifact != nil && op.Artifact.Digest == req.ArtifactDigest {
+					if req.KernelPath == "" {
+						req.KernelPath = op.Artifact.Kernel
+					}
+					if req.RootfsPath == "" {
+						req.RootfsPath = op.Artifact.Rootfs
+					}
+					break
+				}
+			}
+			if req.KernelPath == "" {
+				req.KernelPath = s.defaultKernel
+			}
+		}
+		if req.KernelPath == "" || req.RootfsPath == "" {
+			return r.SendJSON(http.StatusBadRequest, map[string]string{"error": "artifact_not_ready", "message": "kernel and rootfs paths are not available; complete conversion and install runtime assets first"})
 		}
 		vm, err := service.Create(r.RequestCtx, req)
 		if err != nil {
