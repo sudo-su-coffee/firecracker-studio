@@ -33,6 +33,12 @@ type Drive struct {
 	IsReadOnly   bool   `json:"is_read_only"`
 }
 
+type NetworkInterface struct {
+	IfaceID     string `json:"iface_id"`
+	HostDevName string `json:"host_dev_name"`
+	GuestMac    string `json:"guest_mac,omitempty"`
+}
+
 type SnapshotCreate struct {
 	SnapshotType string `json:"snapshot_type"`
 	SnapshotPath string `json:"snapshot_path"`
@@ -71,6 +77,16 @@ func (c *Client) SetBootSource(ctx context.Context, boot BootSource) error {
 
 func (c *Client) SetDrive(ctx context.Context, drive Drive) error {
 	return c.put(ctx, "/drives/"+drive.DriveID, drive)
+}
+
+func (c *Client) SetNetworkInterface(ctx context.Context, iface NetworkInterface) error {
+	if iface.IfaceID == "" {
+		return fmt.Errorf("network interface iface_id is required")
+	}
+	if iface.HostDevName == "" {
+		return fmt.Errorf("network interface host_dev_name is required")
+	}
+	return c.put(ctx, "/network-interfaces/"+iface.IfaceID, iface)
 }
 
 func (c *Client) Start(ctx context.Context) error {

@@ -36,6 +36,9 @@ type VMRequest struct {
 	VCPUs          int           `json:"vcpus"`
 	MemoryMiB      int           `json:"memoryMiB"`
 	PortMappings   []PortMapping `json:"portMappings,omitempty"`
+	// EnableNetworking requests a TAP device even when no port mappings are
+	// given, e.g. so the guest can reach the internet via NAT.
+	EnableNetworking bool `json:"enableNetworking,omitempty"`
 }
 
 type PortMapping struct {
@@ -51,10 +54,22 @@ type VM struct {
 	ImageReference string        `json:"imageReference,omitempty"`
 	KernelPath     string        `json:"kernelPath,omitempty"`
 	RootfsPath     string        `json:"rootfsPath,omitempty"`
+	VCPUs          int           `json:"vcpus,omitempty"`
+	MemoryMiB      int           `json:"memoryMiB,omitempty"`
 	PortMappings   []PortMapping `json:"portMappings,omitempty"`
+	Network        *VMNetwork    `json:"network,omitempty"`
 	Logs           []string      `json:"logs,omitempty"`
 	CreatedAt      time.Time     `json:"createdAt"`
 	UpdatedAt      time.Time     `json:"updatedAt"`
+}
+
+// VMNetwork is the JSON-facing view of a VM's host networking, derived from
+// the internal NetworkConfig once a TAP device has been attached.
+type VMNetwork struct {
+	TapDevice string `json:"tapDevice"`
+	GuestMac  string `json:"guestMac"`
+	GuestCIDR string `json:"guestCidr"`
+	HostCIDR  string `json:"hostCidr"`
 }
 
 type Client struct {
