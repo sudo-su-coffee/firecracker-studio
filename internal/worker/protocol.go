@@ -36,6 +36,8 @@ type VMRequest struct {
 	VCPUs          int           `json:"vcpus"`
 	MemoryMiB      int           `json:"memoryMiB"`
 	PortMappings   []PortMapping `json:"portMappings,omitempty"`
+	StorageMode    string        `json:"storageMode,omitempty"`
+	PersistentDisk string        `json:"persistentDisk,omitempty"`
 }
 
 type PortMapping struct {
@@ -51,6 +53,9 @@ type VM struct {
 	ImageReference string        `json:"imageReference,omitempty"`
 	KernelPath     string        `json:"kernelPath,omitempty"`
 	RootfsPath     string        `json:"rootfsPath,omitempty"`
+	SocketPath     string        `json:"socketPath,omitempty"`
+	StorageMode    string        `json:"storageMode"`
+	PersistentDisk string        `json:"persistentDisk,omitempty"`
 	PortMappings   []PortMapping `json:"portMappings,omitempty"`
 	Logs           []string      `json:"logs,omitempty"`
 	CreatedAt      time.Time     `json:"createdAt"`

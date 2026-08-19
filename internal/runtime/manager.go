@@ -59,7 +59,7 @@ func (m *Manager) Status(ctx context.Context) Status {
 	status.Firecracker = filepath.Join(m.root, "bin", "firecracker")
 	status.Jailer = filepath.Join(m.root, "bin", "jailer")
 	status.Installed = executable(status.Firecracker) && executable(status.Jailer)
-	status.KVM = deviceStatus("/dev/kvm")
+	status.KVM = kvmStatus()
 	status.TAP = tapStatus()
 	status.Kernel = artifactStatus(filepath.Join(m.root, "images", "default", "vmlinux"))
 	status.Rootfs = artifactStatus(filepath.Join(m.root, "images", "default", "rootfs.ext4"))

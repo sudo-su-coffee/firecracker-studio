@@ -86,9 +86,12 @@ func New(ops *operations.Manager, catalog *images.Catalog, workers *worker.Servi
 	app.POST("/api/v1/vms", server.createVM(workers, ops, catalog))
 	app.POST("/api/v1/vms/{id}/start", server.startVM(workers))
 	app.POST("/api/v1/vms/{id}/stop", server.stopVM(workers))
+	app.POST("/api/v1/vms/{id}/pause", server.pauseVM(workers))
+	app.POST("/api/v1/vms/{id}/resume", server.resumeVM(workers))
 	app.DELETE("/api/v1/vms/{id}", server.deleteVM(workers))
 	app.POST("/api/v1/vms/{id}/snapshots", server.createSnapshot(workers))
 	app.POST("/api/v1/vms/{id}/snapshots/restore", server.restoreSnapshot(workers))
+	app.DELETE("/api/v1/vms/{id}/snapshots", server.deleteSnapshot(workers))
 	app.GET("/api/v1/operations/{id}", server.getOperation(ops))
 	app.NotFound(func(r *fastglue.Request) error {
 		return r.SendJSON(http.StatusNotFound, map[string]string{"error": "not_found"})
@@ -172,7 +175,7 @@ func (s *Server) health(r *fastglue.Request) error {
 
 func (s *Server) readiness(r *fastglue.Request) error {
 	status := s.runtimeStatus
-	ready := status.Installed && status.KVM == "ready" && status.Kernel == "present" && status.Rootfs == "present"
+	ready := status.Installed && strings.HasPrefix(status.KVM, "ready") && status.Kernel == "present" && status.Rootfs == "present"
 	return r.SendJSON(http.StatusOK, map[string]any{"ready": ready, "runtime": status, "message": status.Message})
 }
 
@@ -347,6 +350,28 @@ func (s *Server) deleteVM(service *worker.Service) fastglue.FastRequestHandler {
 func (s *Server) stopVM(service *worker.Service) fastglue.FastRequestHandler {
 	return s.vmAction(service, false)
 }
+func (s *Server) pauseVM(service *worker.Service) fastglue.FastRequestHandler {
+	return s.vmStateAction(service, true)
+}
+func (s *Server) resumeVM(service *worker.Service) fastglue.FastRequestHandler {
+	return s.vmStateAction(service, false)
+}
+func (s *Server) vmStateAction(service *worker.Service, pause bool) fastglue.FastRequestHandler {
+	return func(r *fastglue.Request) error {
+		id := fmt.Sprint(r.RequestCtx.UserValue("id"))
+		var vm worker.VM
+		var err error
+		if pause {
+			vm, err = service.Pause(r.RequestCtx, id)
+		} else {
+			vm, err = service.Resume(r.RequestCtx, id)
+		}
+		if err != nil {
+			return r.SendJSON(http.StatusBadRequest, map[string]string{"error": "vm_state_change_failed", "message": err.Error()})
+		}
+		return r.SendJSON(http.StatusOK, vm)
+	}
+}
 
 type snapshotRequest struct {
 	SnapshotPath string `json:"snapshotPath"`
@@ -359,6 +384,19 @@ func (s *Server) createSnapshot(service *worker.Service) fastglue.FastRequestHan
 
 func (s *Server) restoreSnapshot(service *worker.Service) fastglue.FastRequestHandler {
 	return s.snapshotAction(service, true)
+}
+func (s *Server) deleteSnapshot(service *worker.Service) fastglue.FastRequestHandler {
+	return func(r *fastglue.Request) error {
+		id := fmt.Sprint(r.RequestCtx.UserValue("id"))
+		var req snapshotRequest
+		if err := r.Decode(&req, "json"); err != nil {
+			return r.SendJSON(http.StatusBadRequest, map[string]string{"error": "invalid_request", "message": err.Error()})
+		}
+		if err := service.DeleteSnapshot(id, req.SnapshotPath, req.MemoryPath); err != nil {
+			return r.SendJSON(http.StatusBadRequest, map[string]string{"error": "snapshot_delete_failed", "message": err.Error()})
+		}
+		return r.SendJSON(http.StatusOK, map[string]string{"status": "deleted", "vmId": id})
+	}
 }
 
 func (s *Server) snapshotAction(service *worker.Service, restore bool) fastglue.FastRequestHandler {

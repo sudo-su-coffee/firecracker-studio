@@ -45,7 +45,7 @@ func main() {
 		os.Exit(1)
 	}
 	catalog := images.NewCatalog()
-	workerService, err := worker.NewService(worker.DirectorySocketFactory{Dir: cfg.ArtifactDir, FirecrackerPath: runtimeStatus.Firecracker})
+	workerService, err := worker.NewPersistentService(worker.DirectorySocketFactory{Dir: cfg.ArtifactDir, FirecrackerPath: runtimeStatus.Firecracker}, filepath.Join(cfg.ArtifactDir, "studio-vms.json"))
 	if err != nil {
 		log.Error("failed to initialize worker service", "error", err)
 		os.Exit(1)

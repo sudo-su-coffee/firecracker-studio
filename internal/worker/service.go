@@ -11,12 +11,12 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/firecracker"
+	"github.com/sudo-su-coffee/firecracker-studio/internal/state"
 )
 
 type SocketFactory interface {
 	NewSocket(vmID string) (string, error)
 }
-
 type processLauncher interface {
 	Launch(ctx context.Context, vmID, socket string) (*exec.Cmd, error)
 }
@@ -28,14 +28,43 @@ type Service struct {
 	vms       map[string]VM
 	clients   map[string]*firecracker.Client
 	processes map[string]*exec.Cmd
+	store     *state.Store[VM]
 }
 
-func NewService(factory SocketFactory) (*Service, error) {
+func NewService(factory SocketFactory) (*Service, error) { return newService(factory, nil) }
+
+func NewPersistentService(factory SocketFactory, statePath string) (*Service, error) {
+	store, err := state.New[VM](statePath)
+	if err != nil {
+		return nil, err
+	}
+	return newService(factory, store)
+}
+
+func newService(factory SocketFactory, store *state.Store[VM]) (*Service, error) {
 	if factory == nil {
 		return nil, fmt.Errorf("socket factory is required")
 	}
 	launcher, _ := factory.(processLauncher)
-	return &Service{factory: factory, launcher: launcher, vms: make(map[string]VM), clients: make(map[string]*firecracker.Client), processes: make(map[string]*exec.Cmd)}, nil
+	s := &Service{factory: factory, launcher: launcher, vms: map[string]VM{}, clients: map[string]*firecracker.Client{}, processes: map[string]*exec.Cmd{}, store: store}
+	if store != nil {
+		items, err := store.Load()
+		if err != nil {
+			return nil, err
+		}
+		for _, vm := range items {
+			vm.State = "unknown"
+			vm.Logs = append(vm.Logs, time.Now().UTC().Format(time.RFC3339)+" recovered after Studio restart; process liveness must be checked")
+			s.vms[vm.ID] = vm
+			if vm.SocketPath != "" {
+				if client, err := firecracker.NewClient(vm.SocketPath, 30*time.Second); err == nil {
+					s.clients[vm.ID] = client
+				}
+			}
+		}
+		_ = s.persist()
+	}
+	return s, nil
 }
 
 func (s *Service) Create(ctx context.Context, req VMRequest) (VM, error) {
@@ -62,6 +91,13 @@ func (s *Service) Create(ctx context.Context, req VMRequest) (VM, error) {
 			return VM{}, fmt.Errorf("unsupported port protocol %q", port.Protocol)
 		}
 	}
+	storageMode := req.StorageMode
+	if storageMode == "" {
+		storageMode = "ephemeral"
+	}
+	if storageMode != "ephemeral" && storageMode != "persistent" {
+		return VM{}, fmt.Errorf("storageMode must be persistent or ephemeral")
+	}
 	id := uuid.NewString()
 	socket, err := s.factory.NewSocket(id)
 	if err != nil {
@@ -72,8 +108,7 @@ func (s *Service) Create(ctx context.Context, req VMRequest) (VM, error) {
 		return VM{}, err
 	}
 	now := time.Now().UTC()
-
-	vm := VM{ID: id, State: "created", ArtifactDigest: req.ArtifactDigest, ImageReference: req.ImageReference, KernelPath: req.KernelPath, RootfsPath: req.RootfsPath, PortMappings: append([]PortMapping(nil), req.PortMappings...), Logs: []string{"created workload", fmt.Sprintf("image %s", displayImage(req.ImageReference, req.ArtifactDigest))}, CreatedAt: now, UpdatedAt: now}
+	vm := VM{ID: id, State: "created", ArtifactDigest: req.ArtifactDigest, ImageReference: req.ImageReference, KernelPath: req.KernelPath, RootfsPath: req.RootfsPath, SocketPath: socket, StorageMode: storageMode, PersistentDisk: req.PersistentDisk, PortMappings: append([]PortMapping(nil), req.PortMappings...), Logs: []string{"created workload", fmt.Sprintf("image %s", displayImage(req.ImageReference, req.ArtifactDigest))}, CreatedAt: now, UpdatedAt: now}
 	if req.KernelPath != "" || req.RootfsPath != "" {
 		if req.KernelPath == "" || req.RootfsPath == "" {
 			return VM{}, fmt.Errorf("kernelPath and rootfsPath must be provided together")
@@ -120,6 +155,9 @@ func (s *Service) Create(ctx context.Context, req VMRequest) (VM, error) {
 	s.vms[id] = vm
 	s.clients[id] = client
 	s.mu.Unlock()
+	if err := s.persist(); err != nil {
+		return VM{}, fmt.Errorf("persist VM state: %w", err)
+	}
 	return vm, nil
 }
 
@@ -131,7 +169,8 @@ func (s *Service) Start(ctx context.Context, id string) (VM, error) {
 	if err := client.Start(ctx); err != nil {
 		return s.appendLog(id, vm, "start failed: "+err.Error()), err
 	}
-	return s.appendLog(id, s.update(id, "running", vm), "microVM started"), nil
+	updated := s.appendLog(id, s.update(id, "running", vm), "microVM started")
+	return updated, s.persist()
 }
 
 func (s *Service) Stop(ctx context.Context, id string) (VM, error) {
@@ -150,13 +189,34 @@ func (s *Service) Stop(ctx context.Context, id string) (VM, error) {
 			_ = proc.Process.Kill()
 			delete(s.processes, id)
 		}
-		current := s.vms[id]
-		current.State = "stopped"
-		current.UpdatedAt = time.Now().UTC()
-		s.vms[id] = current
+		current, ok := s.vms[id]
+		if ok {
+			current.State = "stopped"
+			current.UpdatedAt = time.Now().UTC()
+			s.vms[id] = current
+		}
 		s.mu.Unlock()
+		_ = s.persist()
 	}()
-	return updated, nil
+	return updated, s.persist()
+}
+
+func (s *Service) Pause(ctx context.Context, id string) (VM, error) {
+	return s.changeState(ctx, id, "paused", func(c *firecracker.Client) error { return c.Pause(ctx) })
+}
+func (s *Service) Resume(ctx context.Context, id string) (VM, error) {
+	return s.changeState(ctx, id, "running", func(c *firecracker.Client) error { return c.Resume(ctx) })
+}
+func (s *Service) changeState(ctx context.Context, id, stateName string, action func(*firecracker.Client) error) (VM, error) {
+	client, vm, err := s.lookup(id)
+	if err != nil {
+		return VM{}, err
+	}
+	if err := action(client); err != nil {
+		return s.appendLog(id, vm, "state change failed: "+err.Error()), err
+	}
+	updated := s.appendLog(id, s.update(id, stateName, vm), "microVM state is "+stateName)
+	return updated, s.persist()
 }
 
 func (s *Service) CreateSnapshot(ctx context.Context, id, snapshotPath, memPath string) error {
@@ -175,7 +235,30 @@ func (s *Service) CreateSnapshot(ctx context.Context, id, snapshotPath, memPath 
 		}
 		_ = s.appendLog(id, vm, message)
 	}
+	if persistErr := s.persist(); err == nil {
+		err = persistErr
+	}
 	return err
+}
+func (s *Service) DeleteSnapshot(id, snapshotPath, memPath string) error {
+	if _, _, err := s.lookup(id); err != nil {
+		return err
+	}
+	if snapshotPath == "" || memPath == "" {
+		return fmt.Errorf("snapshot and memory paths are required")
+	}
+	for _, path := range []string{snapshotPath, memPath} {
+		if filepath.IsAbs(path) == false {
+			return fmt.Errorf("snapshot paths must be absolute")
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove snapshot file %s: %w", path, err)
+		}
+	}
+	if vm, ok := s.Get(id); ok {
+		_ = s.appendLog(id, vm, "snapshot files deleted")
+	}
+	return s.persist()
 }
 
 func (s *Service) RestoreSnapshot(ctx context.Context, id, snapshotPath, memPath string) error {
@@ -194,13 +277,16 @@ func (s *Service) RestoreSnapshot(ctx context.Context, id, snapshotPath, memPath
 		}
 		_ = s.appendLog(id, vm, message)
 	}
+	if persistErr := s.persist(); err == nil {
+		err = persistErr
+	}
 	return err
 }
 
 func (s *Service) Delete(id string) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if _, ok := s.vms[id]; !ok {
+		s.mu.Unlock()
 		return fmt.Errorf("VM %q not found", id)
 	}
 	if proc := s.processes[id]; proc != nil && proc.Process != nil {
@@ -209,31 +295,30 @@ func (s *Service) Delete(id string) error {
 	delete(s.processes, id)
 	delete(s.clients, id)
 	delete(s.vms, id)
-	if factory, ok := s.factory.(DirectorySocketFactory); ok {
+	factory, isDir := s.factory.(DirectorySocketFactory)
+	s.mu.Unlock()
+	if isDir {
 		if err := os.RemoveAll(filepath.Join(factory.Dir, id)); err != nil {
 			return fmt.Errorf("remove VM runtime directory: %w", err)
 		}
 	}
-	return nil
+	return s.persist()
 }
-
 func (s *Service) Get(id string) (VM, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	vm, ok := s.vms[id]
 	return vm, ok
 }
-
 func (s *Service) List() []VM {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	items := make([]VM, 0, len(s.vms))
+	out := make([]VM, 0, len(s.vms))
 	for _, vm := range s.vms {
-		items = append(items, vm)
+		out = append(out, vm)
 	}
-	return items
+	return out
 }
-
 func (s *Service) lookup(id string) (*firecracker.Client, VM, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -244,40 +329,14 @@ func (s *Service) lookup(id string) (*firecracker.Client, VM, error) {
 	}
 	return client, vm, nil
 }
-
-func (s *Service) update(id, state string, vm VM) VM {
-	vm.State = state
+func (s *Service) update(id, stateName string, vm VM) VM {
+	vm.State = stateName
 	vm.UpdatedAt = time.Now().UTC()
 	s.mu.Lock()
 	s.vms[id] = vm
 	s.mu.Unlock()
 	return vm
 }
-
-func displayImage(reference, digest string) string {
-	if reference != "" {
-		return reference
-	}
-	return digest
-}
-
-func waitForSocket(ctx context.Context, socket string) error {
-	deadline := time.NewTimer(5 * time.Second)
-	defer deadline.Stop()
-	for {
-		if _, err := os.Stat(socket); err == nil {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-deadline.C:
-			return fmt.Errorf("Firecracker socket did not appear: %s", socket)
-		case <-time.After(25 * time.Millisecond):
-		}
-	}
-}
-
 func (s *Service) appendLog(id string, vm VM, message string) VM {
 	vm.Logs = append(vm.Logs, time.Now().UTC().Format(time.RFC3339)+" "+message)
 	if len(vm.Logs) > 100 {
@@ -288,6 +347,36 @@ func (s *Service) appendLog(id string, vm VM, message string) VM {
 	s.vms[id] = vm
 	s.mu.Unlock()
 	return vm
+}
+func (s *Service) persist() error {
+	if s.store == nil {
+		return nil
+	}
+	return s.store.Save(s.List())
+}
+func displayImage(reference, digest string) string {
+	if reference != "" {
+		return reference
+	}
+	return digest
+}
+func waitForSocket(ctx context.Context, socket string) error {
+	deadline := time.NewTimer(5 * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if _, err := os.Stat(socket); err == nil {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			return fmt.Errorf("Firecracker socket did not appear: %s", socket)
+		case <-ticker.C:
+		}
+	}
 }
 
 type DirectorySocketFactory struct {
@@ -305,7 +394,6 @@ func (f DirectorySocketFactory) NewSocket(vmID string) (string, error) {
 	}
 	return filepath.Join(dir, "firecracker.sock"), nil
 }
-
 func (f DirectorySocketFactory) Launch(ctx context.Context, vmID, socket string) (*exec.Cmd, error) {
 	if f.FirecrackerPath == "" {
 		return nil, fmt.Errorf("Firecracker binary path is not configured")
