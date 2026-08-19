@@ -25,68 +25,8 @@ const webRequest = async (path, options = {}) => {
 }
 const call = (_name, webFallback) => (...args) => webFallback(...args)
 
-const localServer = () => ({
-  id: 'local-current-server',
-  name: 'This Firecracker Studio server',
-  url: window.location.origin,
-  kind: 'local',
-  health: 'healthy',
-  active: true,
-  managed: true,
-  lastChecked: new Date().toISOString(),
-})
-const storedServers = () => {
-  try {
-    const value = JSON.parse(localStorage.getItem('firecracker-studio.servers') || '[]')
-    return Array.isArray(value) ? value : []
-  } catch { return [] }
-}
-const saveServers = (servers) => localStorage.setItem('firecracker-studio.servers', JSON.stringify(servers))
-const webServers = () => {
-  const current = localServer()
-  const stored = storedServers()
-  const existing = stored.find((entry) => entry.id === current.id)
-  const local = { ...current, ...(existing || {}), url: current.url, health: 'healthy', managed: true, active: existing ? existing.active : true }
-  const remote = stored.filter((entry) => entry.id !== current.id)
-  if (!remote.some((entry) => entry.active) && !local.active) local.active = true
-  const servers = [local, ...remote]
-  saveServers(servers)
-  return servers
-}
-
-export const Servers = call('Servers', async () => webServers())
-export const AddServer = call('AddServer', async (server) => {
-  const health = await fetch(`${server.url.replace(/\/$/, '')}/api/v1/health`, { headers: server.token ? { Authorization: `Bearer ${server.token}` } : {} })
-  if (!health.ok) throw new Error(`health check returned HTTP ${health.status}`)
-  const item = { ...server, id: server.id || crypto.randomUUID(), health: 'healthy', active: true, lastChecked: new Date().toISOString() }
-  const servers = webServers().map((entry) => ({ ...entry, active: false }))
-  saveServers([...servers, item])
-  return item
-})
-export const CheckServer = call('CheckServer', async (id) => {
-  const servers = webServers()
-  const server = servers.find((entry) => entry.id === id)
-  if (!server) throw new Error('server not found')
-  const response = await fetch(`${server.url.replace(/\/$/, '')}/api/v1/health`, { headers: server.token ? { Authorization: `Bearer ${server.token}` } : {} })
-  const updated = { ...server, health: response.ok ? 'healthy' : 'unhealthy', lastChecked: new Date().toISOString() }
-  saveServers(servers.map((entry) => entry.id === id ? updated : entry))
-  if (!response.ok) throw new Error(`health check returned HTTP ${response.status}`)
-  return updated
-})
-export const RemoveServer = call('RemoveServer', async (id) => {
-  if (id === 'local-current-server') throw new Error('the current Firecracker Studio server cannot be removed')
-  return saveServers(webServers().filter((entry) => entry.id !== id))
-})
-export const SwitchServer = call('SwitchServer', async (id) => {
-  const servers = webServers().map((entry) => ({ ...entry, active: entry.id === id }))
-  saveServers(servers)
-  return servers.find((entry) => entry.id === id)
-})
-export const SetConnection = call('SetConnection', async () => undefined)
-
 export const Health = call('Health', () => webRequest('/health'))
 export const Metrics = call('Metrics', () => webRequest('/metrics'))
-export const Logs = call('Logs', () => webRequest('/logs'))
 export const MetricsStream = (onMessage, onError) => {
   const streamToken = apiToken ? `?access_token=${encodeURIComponent(apiToken)}` : ''
   const source = new EventSource(`${webBase()}/metrics/stream${streamToken}`)
