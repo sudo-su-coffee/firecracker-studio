@@ -213,6 +213,9 @@ func (s *Service) Start(ctx context.Context, id string) (VM, error) {
 	if err != nil {
 		return VM{}, err
 	}
+	if vm.State != "created" && vm.State != "stopped" {
+		return VM{}, fmt.Errorf("cannot start VM in state %q", vm.State)
+	}
 	if err := client.Start(ctx); err != nil {
 		return s.appendLog(id, vm, "start failed: "+err.Error()), err
 	}
@@ -224,6 +227,9 @@ func (s *Service) Stop(ctx context.Context, id string) (VM, error) {
 	client, vm, err := s.lookup(id)
 	if err != nil {
 		return VM{}, err
+	}
+	if vm.State != "running" && vm.State != "paused" {
+		return VM{}, fmt.Errorf("cannot stop VM in state %q", vm.State)
 	}
 	if err := client.SendCtrlAltDel(ctx); err != nil {
 		return s.appendLog(id, vm, "stop failed: "+err.Error()), err
@@ -249,15 +255,18 @@ func (s *Service) Stop(ctx context.Context, id string) (VM, error) {
 }
 
 func (s *Service) Pause(ctx context.Context, id string) (VM, error) {
-	return s.changeState(ctx, id, "paused", func(c *firecracker.Client) error { return c.Pause(ctx) })
+	return s.changeState(ctx, id, "paused", "running", func(c *firecracker.Client) error { return c.Pause(ctx) })
 }
 func (s *Service) Resume(ctx context.Context, id string) (VM, error) {
-	return s.changeState(ctx, id, "running", func(c *firecracker.Client) error { return c.Resume(ctx) })
+	return s.changeState(ctx, id, "running", "paused", func(c *firecracker.Client) error { return c.Resume(ctx) })
 }
-func (s *Service) changeState(ctx context.Context, id, stateName string, action func(*firecracker.Client) error) (VM, error) {
+func (s *Service) changeState(ctx context.Context, id, stateName, requiredState string, action func(*firecracker.Client) error) (VM, error) {
 	client, vm, err := s.lookup(id)
 	if err != nil {
 		return VM{}, err
+	}
+	if vm.State != requiredState {
+		return VM{}, fmt.Errorf("cannot change VM from state %q to %q", vm.State, stateName)
 	}
 	if err := action(client); err != nil {
 		return s.appendLog(id, vm, "state change failed: "+err.Error()), err
