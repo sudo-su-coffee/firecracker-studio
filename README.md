@@ -69,9 +69,9 @@ firecracker-studio
 
 The health endpoint remains readable for availability checks. Other API requests require `Authorization: Bearer <token>`. Put an exposed installation behind HTTPS and an appropriate firewall or reverse proxy. Do not expose a raw Firecracker socket.
 
-## What v1.4.0 provides
+## What v2.0.0 provides
 
-The focused v1.4.0 release provides a local browser control surface for the already-installed runtime. It includes host/runtime readiness, local OCI image conversion, artifact cataloging, microVM creation, start and stop actions, lifecycle events, live host metrics, and explicit workload deletion and cleanup. It keeps the runtime installer separate and does not require Docker or containerd at runtime.
+The v2.0.0 major release provides a browser-first remote control surface for an already-installed Firecracker runtime. It includes host/runtime readiness, Docker Hub and GitHub image import, OCI artifact conversion, GitHub deployment YAML validation, artifact cataloging, microVM creation, start, stop, pause, resume, snapshots, persistent and ephemeral storage, TAP port mappings, vsock guest terminal access, lifecycle events, live host metrics, durable resource state, and explicit workload deletion and cleanup. It keeps the runtime installer separate and does not require Docker or containerd at runtime.
 
 The first-run experience is intentionally honest. Missing Firecracker binaries, jailer, KVM permissions, kernel/rootfs assets, or host utilities appear as readiness information rather than a false “ready” state. A workload is not presented as healthy merely because a browser button was clicked.
 
@@ -127,7 +127,7 @@ scripts/                 separate runtime/server installation helpers
 
 ## Current boundary
 
-The unified Go web binary and browser API are implemented. v1.4.0 is a **single-host, pre-release control server** focused on making an already-installed Firecracker runtime approachable. It does not claim to be a cloud deployment platform or complete container compatibility layer. Jailer enforcement, full TAP networking, guest stdout transport, durable workload recovery, and broad compatibility require separate validation before being described as production features.
+The unified Go web binary and browser API are implemented for v2.0.0 as a **single-host remote management platform** focused on making an already-installed Firecracker runtime approachable through the Vue dashboard. It does not claim to be a cloud deployment platform or complete container compatibility layer. Runtime behavior still depends on host KVM permissions, Firecracker and jailer availability, kernel/rootfs assets, guest-agent support for terminal operations, and the configured network and storage environment.
 
 ## License
 

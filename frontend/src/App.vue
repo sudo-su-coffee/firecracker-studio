@@ -101,7 +101,7 @@ onBeforeUnmount(() => { metricsSource?.close(); if (refreshTimer) window.clearIn
       <nav class="nav-list" aria-label="Main navigation">
         <button v-for="item in navItems" :key="item.id" class="nav-item" :class="{ active: state.tab === item.id }" @click="selectTab(item.id)"><span class="nav-icon">{{ item.icon }}</span><span>{{ item.label }}</span><b v-if="item.id === 'vms' && data.vms.length">{{ data.vms.length }}</b></button>
       </nav>
-      <div class="sidebar-footer">v1.4.2 · local control server</div>
+      <div class="sidebar-footer">v2.0.0 · local control server</div>
     </aside>
 
     <main class="studio-main">

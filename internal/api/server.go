@@ -253,10 +253,10 @@ func (s *Server) requestLogger(log *slog.Logger) fastglue.FastMiddleware {
 }
 
 func (s *Server) systemInfo(r *fastglue.Request) error {
-	return r.SendJSON(http.StatusOK, map[string]any{"service": "firecracker-studio", "version": "1.4.0", "runtime": s.runtimeStatus, "api": "v1"})
+	return r.SendJSON(http.StatusOK, map[string]any{"service": "firecracker-studio", "version": "2.0.0", "runtime": s.runtimeStatus, "api": "v1"})
 }
 func (s *Server) health(r *fastglue.Request) error {
-	return r.SendJSON(http.StatusOK, map[string]string{"status": "ok", "service": "firecracker-studio", "version": "1.4.0"})
+	return r.SendJSON(http.StatusOK, map[string]string{"status": "ok", "service": "firecracker-studio", "version": "2.0.0"})
 }
 
 func (s *Server) readiness(r *fastglue.Request) error {
