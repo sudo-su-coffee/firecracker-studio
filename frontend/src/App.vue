@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { AuthStatus, BaseImages, Convert, CreateVM, DeleteVM, Health, Images, Login, Logout, MetricsStream, Operations, RuntimeStatus, SetAuthToken, VMAction, VMs } from './api'
+import { AuthStatus, BaseImages, Convert, CreateVM, DeleteVM, Health, Images, Login, Logout, MetricsStream, Operations, ResolveGitHub, RuntimeStatus, SetAuthToken, VMAction, VMs } from './api'
 
 const navItems = [
   { id: 'overview', label: 'Overview', icon: '▦' },
@@ -59,7 +59,7 @@ async function refresh() {
   } catch (error) { data.health = null; data.message = errorText(error) } finally { data.loading = false }
 }
 async function fetchLogs() { try { const response = await fetch('/api/v1/logs', { headers: state.token ? { Authorization: `Bearer ${state.token}` } : {} }); const result = await response.json(); return result.events || [] } catch { return [] } }
-async function convert() { busy.value = true; try { const operation = await Convert(state.source, state.sourceType, state.baseProfile); data.message = `Conversion queued: ${operation.id}`; await refresh() } catch (error) { data.message = errorText(error) } finally { busy.value = false } }
+async function convert() { busy.value = true; try { let source = state.source; if (state.sourceType === 'github' || state.sourceType === 'github-yaml') { const resolved = await ResolveGitHub(state.source); source = resolved.rawUrl || state.source; data.message = `GitHub source pinned to ${resolved.commit.slice(0, 12)}` } const operation = await Convert(source, state.sourceType === 'github-yaml' ? 'oci' : state.sourceType, state.baseProfile); data.message = `Image import queued: ${operation.id}`; await refresh() } catch (error) { data.message = errorText(error) } finally { busy.value = false } }
 async function createVM() {
   if (!latestOperation.value?.artifact?.digest) { data.message = 'Wait for a successful conversion before creating a workload'; return }
   busy.value = true
