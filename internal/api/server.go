@@ -2,6 +2,7 @@ package api
 
 import (
 	"bufio"
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
@@ -13,7 +14,8 @@ import (
 	"github.com/sudo-su-coffee/firecracker-studio/internal/config"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/images"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/operations"
-	studiort "github.com/sudo-su-coffee/firecracker-studio/internal/runtime"
+	"github.com/sudo-su-coffee/firecracker-studio/internal/runtime"
+	"github.com/sudo-su-coffee/firecracker-studio/internal/sources"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/worker"
 	"github.com/valyala/fasthttp"
 	"github.com/zerodha/fastglue"
@@ -26,7 +28,7 @@ type Server struct {
 	ops              *operations.Manager
 	catalog          *images.Catalog
 	workers          *worker.Service
-	runtimeStatus    studiort.Status
+	runtimeStatus    runtime.Status
 	defaultKernel    string
 	authConfigured   bool
 	authUsername     string
@@ -64,7 +66,7 @@ type metricsSnapshot struct {
 	Host              hostMetrics `json:"host"`
 }
 
-func New(ops *operations.Manager, catalog *images.Catalog, workers *worker.Service, runtimeStatus studiort.Status, defaultKernel string, cfg config.Config, log *slog.Logger) (*Server, error) {
+func New(ops *operations.Manager, catalog *images.Catalog, workers *worker.Service, runtimeStatus runtime.Status, defaultKernel string, cfg config.Config, log *slog.Logger) (*Server, error) {
 	if ops == nil {
 		return nil, fmt.Errorf("operation manager is required")
 	}
@@ -91,6 +93,7 @@ func New(ops *operations.Manager, catalog *images.Catalog, workers *worker.Servi
 	app.GET("/api/v1/base-images", server.listBaseImages)
 	app.GET("/api/v1/readiness", server.readiness)
 	app.GET("/api/v1/images", server.listImages(catalog))
+	app.GET("/api/v1/sources/github", server.resolveGitHubSource)
 	app.POST("/api/v1/images", server.registerImage(catalog))
 	app.DELETE("/api/v1/images/{digest}", server.deleteImage(catalog))
 	app.POST("/api/v1/conversions", server.enqueueConversion(ops, catalog))
@@ -251,6 +254,18 @@ func (s *Server) metricsStream(ctx *fasthttp.RequestCtx) {
 
 func (s *Server) listBaseImages(r *fastglue.Request) error {
 	return r.SendJSON(http.StatusOK, map[string]any{"images": images.ManagedBaseImages()})
+}
+
+func (s *Server) resolveGitHubSource(r *fastglue.Request) error {
+	reference := strings.TrimSpace(string(r.RequestCtx.QueryArgs().Peek("reference")))
+	if reference == "" {
+		return r.SendJSON(http.StatusBadRequest, map[string]string{"error": "github_reference_required"})
+	}
+	source, err := sources.ResolveGitHub(context.Background(), reference)
+	if err != nil {
+		return r.SendJSON(http.StatusBadGateway, map[string]string{"error": "github_resolve_failed", "message": err.Error()})
+	}
+	return r.SendJSON(http.StatusOK, source)
 }
 
 func (s *Server) listImages(catalog *images.Catalog) fastglue.FastRequestHandler {
