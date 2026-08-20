@@ -362,6 +362,7 @@ func (s *Service) Get(id string) (VM, bool) {
 	vm, ok := s.vms[id]
 	return vm, ok
 }
+
 func (s *Service) List() []VM {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

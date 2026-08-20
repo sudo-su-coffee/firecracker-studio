@@ -93,6 +93,9 @@ func New(ops *operations.Manager, catalog *images.Catalog, workers *worker.Servi
 	app.GET("/api/v1/base-images", server.listBaseImages)
 	app.GET("/api/v1/readiness", server.readiness)
 	app.GET("/api/v1/images", server.listImages(catalog))
+	app.GET("/api/v1/images/{id}", server.imageDetail(catalog))
+	app.GET("/api/v1/images/storage-stats", server.imageStorageStats(catalog))
+	app.GET("/api/v1/images/templates", server.listBaseImages)
 	app.GET("/api/v1/sources/github", server.resolveGitHubSource)
 	app.POST("/api/v1/sources/yaml", server.parseDeploymentYAML)
 	app.POST("/api/v1/images", server.registerImage(catalog))
@@ -100,6 +103,8 @@ func New(ops *operations.Manager, catalog *images.Catalog, workers *worker.Servi
 	app.POST("/api/v1/conversions", server.enqueueConversion(ops, catalog))
 	app.GET("/api/v1/operations", server.listOperations(ops))
 	app.GET("/api/v1/vms", server.listVMs(workers))
+	app.GET("/api/v1/vms/{id}", server.vmDetail(workers))
+	app.GET("/api/v1/vms/{id}/process", server.vmProcess(workers))
 	app.POST("/api/v1/vms", server.createVM(workers, ops, catalog))
 	app.POST("/api/v1/vms/{id}/start", server.startVM(workers))
 	app.POST("/api/v1/vms/{id}/stop", server.stopVM(workers))
@@ -108,7 +113,9 @@ func New(ops *operations.Manager, catalog *images.Catalog, workers *worker.Servi
 	app.POST("/api/v1/vms/{id}/terminal", server.execGuest(workers))
 	app.DELETE("/api/v1/vms/{id}", server.deleteVM(workers))
 	app.POST("/api/v1/vms/{id}/snapshots", server.createSnapshot(workers))
+	app.POST("/api/v1/vms/{id}/snapshot", server.createSnapshot(workers))
 	app.POST("/api/v1/vms/{id}/snapshots/restore", server.restoreSnapshot(workers))
+	app.POST("/api/v1/vms/{id}/restore", server.restoreSnapshot(workers))
 	app.DELETE("/api/v1/vms/{id}/snapshots", server.deleteSnapshot(workers))
 	app.GET("/api/v1/operations/{id}", server.getOperation(ops))
 	app.NotFound(func(r *fastglue.Request) error {
@@ -276,6 +283,42 @@ func (s *Server) parseDeploymentYAML(r *fastglue.Request) error {
 		return r.SendJSON(http.StatusBadRequest, map[string]string{"error": "invalid_deployment_yaml", "message": err.Error()})
 	}
 	return r.SendJSON(http.StatusOK, spec)
+}
+
+func (s *Server) vmDetail(service *worker.Service) fastglue.FastRequestHandler {
+	return func(r *fastglue.Request) error {
+		id := fmt.Sprint(r.RequestCtx.UserValue("id"))
+		vm, ok := service.Get(id)
+		if !ok {
+			return r.SendJSON(http.StatusNotFound, map[string]string{"error": "vm_not_found"})
+		}
+		return r.SendJSON(http.StatusOK, vm)
+	}
+}
+func (s *Server) vmProcess(service *worker.Service) fastglue.FastRequestHandler {
+	return func(r *fastglue.Request) error {
+		id := fmt.Sprint(r.RequestCtx.UserValue("id"))
+		vm, ok := service.Get(id)
+		if !ok {
+			return r.SendJSON(http.StatusNotFound, map[string]string{"error": "vm_not_found"})
+		}
+		return r.SendJSON(http.StatusOK, map[string]any{"vmId": id, "state": vm.State, "socketPath": vm.SocketPath, "updatedAt": vm.UpdatedAt})
+	}
+}
+func (s *Server) imageDetail(catalog *images.Catalog) fastglue.FastRequestHandler {
+	return func(r *fastglue.Request) error {
+		id := fmt.Sprint(r.RequestCtx.UserValue("id"))
+		image, ok := catalog.Get(id)
+		if !ok {
+			return r.SendJSON(http.StatusNotFound, map[string]string{"error": "image_not_found"})
+		}
+		return r.SendJSON(http.StatusOK, image)
+	}
+}
+func (s *Server) imageStorageStats(catalog *images.Catalog) fastglue.FastRequestHandler {
+	return func(r *fastglue.Request) error {
+		return r.SendJSON(http.StatusOK, map[string]any{"bytes": catalog.StorageBytes(), "images": len(catalog.List())})
+	}
 }
 
 func (s *Server) listImages(catalog *images.Catalog) fastglue.FastRequestHandler {
