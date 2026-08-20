@@ -3,14 +3,14 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { AuthStatus, BaseImages, Convert, CreateVM, DeleteVM, GuestCommand, Health, Images, Login, Logout, Logs, MetricsStream, Operations, ResolveGitHub, RuntimeStatus, SetAuthToken, SystemInfo, SystemStats, ValidateYAML, VMAction, VMs, Kernels, RegisterKernel, DeleteKernel, Volumes, CreateVolume, DeleteVolume, VMSock } from './api'
 
 const navItems = [
-  { id: 'overview', label: 'Overview', icon: '▦' },
-  { id: 'vms', label: 'Workloads', icon: '▣' },
-  { id: 'convert', label: 'Images & Builds', icon: '◇' },
-  { id: 'snapshots', label: 'Snapshots', icon: '◫' },
-  { id: 'storage', label: 'Storage', icon: '▤' },
-  { id: 'readiness', label: 'Host Readiness', icon: '▥' },
-  { id: 'logs', label: 'Activity Logs', icon: '☷' },
-  { id: 'settings', label: 'Settings', icon: '⚙' },
+  { id: 'overview', path: '/', label: 'Overview', icon: '▦' },
+  { id: 'vms', path: '/workloads', label: 'Workloads', icon: '▣' },
+  { id: 'convert', path: '/images', label: 'Images & Builds', icon: '◇' },
+  { id: 'snapshots', path: '/snapshots', label: 'Snapshots', icon: '◫' },
+  { id: 'storage', path: '/storage', label: 'Storage', icon: '▤' },
+  { id: 'readiness', path: '/host-readiness', label: 'Host Readiness', icon: '▥' },
+  { id: 'logs', path: '/activity', label: 'Activity Logs', icon: '☷' },
+  { id: 'settings', path: '/settings', label: 'Settings', icon: '⚙' },
 ]
 
 const state = reactive({
@@ -41,11 +41,15 @@ const hostChecks = computed(() => [
 ])
 const pageTitle = computed(() => navItems.find(item => item.id === state.tab)?.label || 'Overview')
 
+function tabFromPath(pathname) { return navItems.find(item => item.path === pathname)?.id || 'overview' }
+function pathForTab(tab) { return navItems.find(item => item.id === tab)?.path || '/' }
+function handleRouteChange() { state.tab = tabFromPath(window.location.pathname) }
+
 function errorText(error) { return String(error).replace(/^Error: /, '') }
 function formatBytes(value = 0) { if (!value) return '0 B'; const units = ['B', 'KB', 'MB', 'GB', 'TB']; const i = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1); return `${(value / 1024 ** i).toFixed(i ? 1 : 0)} ${units[i]}` }
 function ago(value) { if (!value) return '—'; const minutes = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 60000)); return minutes < 1 ? 'Just now' : minutes < 60 ? `${minutes}m ago` : `${Math.round(minutes / 60)}h ago` }
 function statusClass(value) { return String(value || 'unknown').toLowerCase().replace(/\s+/g, '-') }
-function selectTab(tab) { state.tab = tab }
+function selectTab(tab) { state.tab = tab; const path = pathForTab(tab); if (window.location.pathname !== path) window.history.pushState({ tab }, '', path) }
 function startMetrics() { metricsSource?.close(); metricsSource = MetricsStream(metrics => { data.metrics = metrics }, () => {}) }
 async function login() { busy.value = true; try { const result = await Login(state.loginUsername, state.loginPassword); state.authenticated = result.authenticated === true; state.username = result.username || state.loginUsername; state.loginPassword = ''; data.message = 'Signed in'; startMetrics(); await refresh() } catch (error) { data.message = errorText(error) } finally { busy.value = false } }
 async function logout() { await Logout().catch(() => {}); metricsSource?.close(); state.authenticated = false; state.username = ''; data.message = 'Signed out' }
@@ -74,9 +78,9 @@ async function createVM() {
 async function runGuestCommand(id) { busy.value = true; try { const result = await GuestCommand(id, state.terminalCommand); state.terminalOutput = result.output || ''; data.message = 'Guest command completed' } catch (error) { state.terminalOutput = errorText(error); data.message = 'Guest terminal unavailable or command failed' } finally { busy.value = false } }
 async function vmAction(id, action) { busy.value = true; try { await VMAction(id, action); data.message = `Workload ${action} requested`; await refresh() } catch (error) { data.message = errorText(error) } finally { busy.value = false } }
 async function deleteVM(id) { if (!window.confirm('Delete this microVM and its managed files?')) return; busy.value = true; try { await DeleteVM(id); state.selectedVM = ''; data.message = 'Workload deleted'; await refresh() } catch (error) { data.message = errorText(error) } finally { busy.value = false } }
-function chooseVM(vm) { state.selectedVM = vm.id; state.tab = 'vms' }
-onMounted(async () => { SetAuthToken(state.token); try { const auth = await AuthStatus(); state.authConfigured = auth.configured === true; state.authenticated = auth.authenticated === true; state.username = auth.username || ''; } catch (error) { data.message = errorText(error) } if (!state.authConfigured || state.authenticated) { startMetrics(); await refresh(); refreshTimer = window.setInterval(refresh, 6000) } })
-onBeforeUnmount(() => { metricsSource?.close(); if (refreshTimer) window.clearInterval(refreshTimer) })
+function chooseVM(vm) { state.selectedVM = vm.id; selectTab('vms') }
+onMounted(async () => { state.tab = tabFromPath(window.location.pathname); window.addEventListener('popstate', handleRouteChange); SetAuthToken(state.token); try { const auth = await AuthStatus(); state.authConfigured = auth.configured === true; state.authenticated = auth.authenticated === true; state.username = auth.username || ''; } catch (error) { data.message = errorText(error) } if (!state.authConfigured || state.authenticated) { startMetrics(); await refresh(); refreshTimer = window.setInterval(refresh, 6000) } })
+onBeforeUnmount(() => { metricsSource?.close(); window.removeEventListener('popstate', handleRouteChange); if (refreshTimer) window.clearInterval(refreshTimer) })
 </script>
 
 <template>
