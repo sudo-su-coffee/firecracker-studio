@@ -17,6 +17,7 @@ import (
 	"github.com/sudo-su-coffee/firecracker-studio/internal/resources"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/runtime"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/sources"
+	"github.com/sudo-su-coffee/firecracker-studio/internal/state"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/worker"
 	"github.com/valyala/fasthttp"
 	"github.com/zerodha/fastglue"
@@ -43,6 +44,7 @@ type Server struct {
 	kernels          map[string]resources.Kernel
 	volumes          map[string]resources.Volume
 	vsocks           map[string]resources.VsockConfig
+	resourceStore    *state.Store[resources.State]
 }
 
 type hostMetrics struct {
@@ -87,6 +89,27 @@ func New(ops *operations.Manager, catalog *images.Catalog, workers *worker.Servi
 	}
 	app := fastglue.New()
 	server := &Server{app: app, ops: ops, catalog: catalog, workers: workers, runtimeStatus: runtimeStatus, defaultKernel: defaultKernel, events: make([]string, 0, 100), machineConfigs: make(map[string]resources.MachineConfig), kernels: make(map[string]resources.Kernel), volumes: make(map[string]resources.Volume), vsocks: make(map[string]resources.VsockConfig), authUsername: cfg.Admin.Username, authPasswordHash: cfg.Admin.PasswordHash, publicHTTPS: strings.HasPrefix(strings.ToLower(cfg.PublicURL), "https://")}
+	resourcePath := os.Getenv("FIRECRACKER_STUDIO_RESOURCE_STATE")
+	if resourcePath == "" {
+		resourcePath = "resources.json"
+	}
+	resourceStore, err := state.New[resources.State](resourcePath)
+	if err != nil {
+		return nil, fmt.Errorf("create resource state store: %w", err)
+	}
+	resourceItems, err := resourceStore.Load()
+	if err != nil {
+		return nil, fmt.Errorf("load resource state: %w", err)
+	}
+	resourceState := resources.NewState()
+	if len(resourceItems) > 0 {
+		resourceState = resourceItems[len(resourceItems)-1]
+	}
+	server.resourceStore = resourceStore
+	server.machineConfigs = resourceState.MachineConfigs
+	server.kernels = resourceState.Kernels
+	server.volumes = resourceState.Volumes
+	server.vsocks = resourceState.Vsocks
 	server.authConfigured = server.authUsername != "" && server.authPasswordHash != ""
 	server.authKey = authKey(server.authPasswordHash)
 	app.After(server.requestLogger(log))

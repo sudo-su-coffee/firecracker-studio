@@ -12,6 +12,12 @@ import (
 )
 
 func resourceID(r *fastglue.Request) string { return fmt.Sprint(r.RequestCtx.UserValue("id")) }
+func (s *Server) saveResourcesLocked() error {
+	if s.resourceStore == nil {
+		return fmt.Errorf("resource state store is not configured")
+	}
+	return s.resourceStore.Save([]resources.State{{MachineConfigs: s.machineConfigs, Kernels: s.kernels, Volumes: s.volumes, Vsocks: s.vsocks}})
+}
 func (s *Server) getMachineConfig(r *fastglue.Request) error {
 	id := resourceID(r)
 	s.resourceMu.RLock()
@@ -34,7 +40,11 @@ func (s *Server) putMachineConfig(r *fastglue.Request) error {
 	c.UpdatedAt = time.Now().UTC()
 	s.resourceMu.Lock()
 	s.machineConfigs[id] = c
+	err := s.saveResourcesLocked()
 	s.resourceMu.Unlock()
+	if err != nil {
+		return r.SendJSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
 	return r.SendJSON(http.StatusOK, c)
 }
 func (s *Server) patchMachineConfig(r *fastglue.Request) error { return s.putMachineConfig(r) }
@@ -64,7 +74,11 @@ func (s *Server) registerKernel(r *fastglue.Request) error {
 	k.RegisteredAt = time.Now().UTC()
 	s.resourceMu.Lock()
 	s.kernels[k.ID] = k
+	err := s.saveResourcesLocked()
 	s.resourceMu.Unlock()
+	if err != nil {
+		return r.SendJSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
 	return r.SendJSON(http.StatusCreated, k)
 }
 func (s *Server) deleteKernel(r *fastglue.Request) error {
@@ -75,6 +89,9 @@ func (s *Server) deleteKernel(r *fastglue.Request) error {
 		return r.SendJSON(404, map[string]string{"error": "kernel_not_found"})
 	}
 	delete(s.kernels, id)
+	if err := s.saveResourcesLocked(); err != nil {
+		return r.SendJSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
 	return r.SendJSON(http.StatusOK, map[string]string{"status": "deleted", "id": id})
 }
 func (s *Server) cloneImage(c *images.Catalog) fastglue.FastRequestHandler {
@@ -121,7 +138,11 @@ func (s *Server) createVolume(r *fastglue.Request) error {
 	v.CreatedAt = time.Now().UTC()
 	s.resourceMu.Lock()
 	s.volumes[v.ID] = v
+	err := s.saveResourcesLocked()
 	s.resourceMu.Unlock()
+	if err != nil {
+		return r.SendJSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
 	return r.SendJSON(http.StatusCreated, v)
 }
 func (s *Server) deleteVolume(r *fastglue.Request) error {
@@ -136,6 +157,9 @@ func (s *Server) deleteVolume(r *fastglue.Request) error {
 		return r.SendJSON(409, map[string]string{"error": "volume_attached"})
 	}
 	delete(s.volumes, id)
+	if err := s.saveResourcesLocked(); err != nil {
+		return r.SendJSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
 	return r.SendJSON(http.StatusOK, map[string]string{"status": "deleted", "id": id})
 }
 func (s *Server) getVsock(r *fastglue.Request) error {
@@ -156,6 +180,10 @@ func (s *Server) putVsock(r *fastglue.Request) error {
 	id := resourceID(r)
 	s.resourceMu.Lock()
 	s.vsocks[id] = v
+	err := s.saveResourcesLocked()
 	s.resourceMu.Unlock()
+	if err != nil {
+		return r.SendJSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
 	return r.SendJSON(http.StatusOK, v)
 }
