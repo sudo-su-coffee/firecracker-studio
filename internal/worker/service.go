@@ -328,7 +328,8 @@ func (s *Service) RestoreSnapshot(ctx context.Context, id, snapshotPath, memPath
 
 func (s *Service) Delete(id string) error {
 	s.mu.Lock()
-	if _, ok := s.vms[id]; !ok {
+	vm, ok := s.vms[id]
+	if !ok {
 		s.mu.Unlock()
 		return fmt.Errorf("VM %q not found", id)
 	}
@@ -340,6 +341,10 @@ func (s *Service) Delete(id string) error {
 	delete(s.vms, id)
 	factory, isDir := s.factory.(DirectorySocketFactory)
 	s.mu.Unlock()
+	if s.network != nil && vm.GuestIP != "" {
+		s.network.RemovePortMappings(context.Background(), strings.Split(vm.GuestIP, "/")[0], vm.PortMappings)
+		_ = s.network.Teardown(context.Background(), id)
+	}
 	if isDir {
 		if err := os.RemoveAll(filepath.Join(factory.Dir, id)); err != nil {
 			return fmt.Errorf("remove VM runtime directory: %w", err)
