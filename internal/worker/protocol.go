@@ -57,6 +57,10 @@ type VM struct {
 	StorageMode    string        `json:"storageMode"`
 	PersistentDisk string        `json:"persistentDisk,omitempty"`
 	PortMappings   []PortMapping `json:"portMappings,omitempty"`
+	TapDevice      string        `json:"tapDevice,omitempty"`
+	GuestIP        string        `json:"guestIp,omitempty"`
+	HostIP         string        `json:"hostIp,omitempty"`
+	GuestMAC       string        `json:"guestMac,omitempty"`
 	Logs           []string      `json:"logs,omitempty"`
 	CreatedAt      time.Time     `json:"createdAt"`
 	UpdatedAt      time.Time     `json:"updatedAt"`

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -30,6 +31,7 @@ type Service struct {
 	clients   map[string]*firecracker.Client
 	processes map[string]*exec.Cmd
 	store     *state.Store[VM]
+	network   *NetworkManager
 }
 
 func NewService(factory SocketFactory) (*Service, error) { return newService(factory, nil) }
@@ -47,7 +49,7 @@ func newService(factory SocketFactory, store *state.Store[VM]) (*Service, error)
 		return nil, fmt.Errorf("socket factory is required")
 	}
 	launcher, _ := factory.(processLauncher)
-	s := &Service{factory: factory, launcher: launcher, vms: map[string]VM{}, clients: map[string]*firecracker.Client{}, processes: map[string]*exec.Cmd{}, store: store}
+	s := &Service{factory: factory, launcher: launcher, vms: map[string]VM{}, clients: map[string]*firecracker.Client{}, processes: map[string]*exec.Cmd{}, store: store, network: NewNetworkManager()}
 	if store != nil {
 		items, err := store.Load()
 		if err != nil {
@@ -153,6 +155,12 @@ func (s *Service) Create(ctx context.Context, req VMRequest) (VM, error) {
 			_ = proc.Process.Kill()
 			return VM{}, err
 		}
+		networkConfig, networkErr := s.network.Setup(ctx, id)
+		if networkErr != nil {
+			_ = proc.Process.Kill()
+			return VM{}, fmt.Errorf("configure VM networking: %w", networkErr)
+		}
+		vm.TapDevice, vm.GuestIP, vm.HostIP, vm.GuestMAC = networkConfig.TapDevice, networkConfig.GuestCIDR, networkConfig.HostCIDR, networkConfig.GuestMac
 		if err := client.SetMachineConfig(ctx, firecracker.MachineConfig{VCPUCount: req.VCPUs, MemSizeMiB: req.MemoryMiB}); err != nil {
 			_ = proc.Process.Kill()
 			return VM{}, fmt.Errorf("configure machine: %w", err)
@@ -161,15 +169,27 @@ func (s *Service) Create(ctx context.Context, req VMRequest) (VM, error) {
 		if bootArgs == "" {
 			bootArgs = "console=ttyS0 reboot=k panic=1 pci=off"
 		}
+		bootArgs = networkBootArgs(bootArgs, networkConfig)
 		if err := client.SetBootSource(ctx, firecracker.BootSource{KernelImagePath: req.KernelPath, BootArgs: bootArgs}); err != nil {
 			_ = proc.Process.Kill()
 			return VM{}, fmt.Errorf("configure boot source: %w", err)
+		}
+		if err := client.SetNetworkInterface(ctx, firecracker.NetworkInterface{IfaceID: networkConfig.IfaceID, HostDevName: networkConfig.TapDevice, GuestMAC: networkConfig.GuestMac}); err != nil {
+			_ = proc.Process.Kill()
+			return VM{}, fmt.Errorf("configure network interface: %w", err)
 		}
 		if err := client.SetDrive(ctx, firecracker.Drive{DriveID: "rootfs", PathOnHost: req.RootfsPath, IsRootDevice: true, IsReadOnly: false}); err != nil {
 			_ = proc.Process.Kill()
 			return VM{}, fmt.Errorf("configure rootfs: %w", err)
 		}
-		vm.Logs = append(vm.Logs, "Firecracker process launched", "kernel and rootfs configured")
+		if len(req.PortMappings) > 0 {
+			if err := s.network.ApplyPortMappings(ctx, strings.Split(networkConfig.GuestCIDR, "/")[0], req.PortMappings); err != nil {
+				_ = proc.Process.Kill()
+				_ = s.network.Teardown(context.WithoutCancel(ctx), id)
+				return VM{}, fmt.Errorf("configure port mappings: %w", err)
+			}
+		}
+		vm.Logs = append(vm.Logs, "Firecracker process launched", "kernel, rootfs, TAP network, and port mappings configured")
 		s.mu.Lock()
 		s.processes[id] = proc
 		s.mu.Unlock()
