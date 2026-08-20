@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sudo-su-coffee/firecracker-studio/internal/config"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/images"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/operations"
 	studiort "github.com/sudo-su-coffee/firecracker-studio/internal/runtime"
@@ -21,14 +22,19 @@ import (
 )
 
 type Server struct {
-	app           *fastglue.Fastglue
-	ops           *operations.Manager
-	catalog       *images.Catalog
-	workers       *worker.Service
-	runtimeStatus studiort.Status
-	defaultKernel string
-	eventsMu      sync.RWMutex
-	events        []string
+	app              *fastglue.Fastglue
+	ops              *operations.Manager
+	catalog          *images.Catalog
+	workers          *worker.Service
+	runtimeStatus    studiort.Status
+	defaultKernel    string
+	authConfigured   bool
+	authUsername     string
+	authPasswordHash string
+	authKey          []byte
+	publicHTTPS      bool
+	eventsMu         sync.RWMutex
+	events           []string
 }
 
 type hostMetrics struct {
@@ -57,7 +63,7 @@ type metricsSnapshot struct {
 	Host       hostMetrics `json:"host"`
 }
 
-func New(ops *operations.Manager, catalog *images.Catalog, workers *worker.Service, runtimeStatus studiort.Status, defaultKernel string, log *slog.Logger) (*Server, error) {
+func New(ops *operations.Manager, catalog *images.Catalog, workers *worker.Service, runtimeStatus studiort.Status, defaultKernel string, cfg config.Config, log *slog.Logger) (*Server, error) {
 	if ops == nil {
 		return nil, fmt.Errorf("operation manager is required")
 	}
@@ -71,9 +77,14 @@ func New(ops *operations.Manager, catalog *images.Catalog, workers *worker.Servi
 		log = slog.Default()
 	}
 	app := fastglue.New()
-	server := &Server{app: app, ops: ops, catalog: catalog, workers: workers, runtimeStatus: runtimeStatus, defaultKernel: defaultKernel, events: make([]string, 0, 100)}
+	server := &Server{app: app, ops: ops, catalog: catalog, workers: workers, runtimeStatus: runtimeStatus, defaultKernel: defaultKernel, events: make([]string, 0, 100), authUsername: cfg.Admin.Username, authPasswordHash: cfg.Admin.PasswordHash, publicHTTPS: strings.HasPrefix(strings.ToLower(cfg.PublicURL), "https://")}
+	server.authConfigured = server.authUsername != "" && server.authPasswordHash != ""
+	server.authKey = authKey(server.authPasswordHash)
 	app.After(server.requestLogger(log))
 	app.GET("/api/v1/health", server.health)
+	app.POST("/api/v1/auth/login", server.login)
+	app.GET("/api/v1/auth/status", server.authStatus)
+	app.POST("/api/v1/auth/logout", server.logout)
 	app.GET("/api/v1/metrics", server.metrics)
 	app.GET("/api/v1/logs", server.logs)
 	app.GET("/api/v1/base-images", server.listBaseImages)
@@ -103,9 +114,7 @@ func (s *Server) Handler() func(*fasthttp.RequestCtx) {
 	handler := s.app.Handler()
 	return func(ctx *fasthttp.RequestCtx) {
 		if !s.authorized(ctx) {
-			ctx.SetStatusCode(http.StatusUnauthorized)
-			ctx.Response.Header.SetContentType("application/json")
-			ctx.SetBodyString(`{"error":"unauthorized","message":"provide FIRECRACKER_STUDIO_TOKEN as a Bearer token"}`)
+			s.authError(ctx)
 			return
 		}
 		if string(ctx.Path()) == "/api/v1/metrics/stream" {
@@ -136,21 +145,28 @@ func (s *Server) ListenAndServe(address string) error {
 }
 
 func (s *Server) authorized(ctx *fasthttp.RequestCtx) bool {
+	path := string(ctx.Path())
+	if (path == "/api/v1/health" || path == "/api/v1/auth/login" || path == "/api/v1/auth/status") && (ctx.IsGet() || path == "/api/v1/auth/login") {
+		return true
+	}
 	token := strings.TrimSpace(os.Getenv("FIRECRACKER_STUDIO_TOKEN"))
-	if token == "" {
-		return true
-	}
-	if string(ctx.Path()) == "/api/v1/health" && ctx.IsGet() {
-		return true
-	}
-	want := "Bearer " + token
-	got := string(ctx.Request.Header.Peek("Authorization"))
-	if got == "" {
-		if queryToken := string(ctx.QueryArgs().Peek("access_token")); queryToken != "" {
-			got = "Bearer " + queryToken
+	if token != "" {
+		want := "Bearer " + token
+		got := string(ctx.Request.Header.Peek("Authorization"))
+		if got == "" {
+			if queryToken := string(ctx.QueryArgs().Peek("access_token")); queryToken != "" {
+				got = "Bearer " + queryToken
+			}
+		}
+		if subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1 {
+			return true
 		}
 	}
-	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
+	if !s.authConfigured {
+		return true
+	}
+	authenticated, _, _ := s.sessionFromRequest(ctx)
+	return authenticated
 }
 
 func (s *Server) requestLogger(log *slog.Logger) fastglue.FastMiddleware {

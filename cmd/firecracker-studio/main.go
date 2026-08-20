@@ -23,11 +23,26 @@ var version = "1.4.0"
 
 func main() {
 	cfg := config.Default()
-	if address := os.Getenv("FIRECRACKER_STUDIO_LISTEN"); address != "" {
-		cfg.ListenAddress = address
+	configPath := os.Getenv("FIRECRACKER_STUDIO_CONFIG")
+	if configPath == "" {
+		candidate := filepath.Join(cfg.StateDir, "config.toml")
+		if _, err := os.Stat(candidate); err == nil {
+			configPath = candidate
+		}
 	}
-	if err := cfg.Validate(); err != nil {
-		panic(err)
+	if configPath != "" {
+		loaded, err := config.Load(configPath)
+		if err != nil {
+			panic(err)
+		}
+		cfg = loaded
+	} else {
+		if address := os.Getenv("FIRECRACKER_STUDIO_LISTEN"); address != "" {
+			cfg.ListenAddress = address
+		}
+		if err := cfg.Validate(); err != nil {
+			panic(err)
+		}
 	}
 
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -44,13 +59,17 @@ func main() {
 		log.Error("failed to initialize operation manager", "error", err)
 		os.Exit(1)
 	}
-	catalog := images.NewCatalog()
+	catalog, err := images.NewCatalog(filepath.Join(cfg.StateDir, "images.json"))
+	if err != nil {
+		log.Error("failed to initialize image catalog", "error", err)
+		os.Exit(1)
+	}
 	workerService, err := worker.NewPersistentService(worker.DirectorySocketFactory{Dir: cfg.ArtifactDir, FirecrackerPath: runtimeStatus.Firecracker}, filepath.Join(cfg.ArtifactDir, "studio-vms.json"))
 	if err != nil {
 		log.Error("failed to initialize worker service", "error", err)
 		os.Exit(1)
 	}
-	apiServer, err := api.New(ops, catalog, workerService, runtimeStatus, defaultKernel, log)
+	apiServer, err := api.New(ops, catalog, workerService, runtimeStatus, defaultKernel, cfg, log)
 	if err != nil {
 		log.Error("failed to initialize api", "error", err)
 		os.Exit(1)

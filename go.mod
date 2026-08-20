@@ -8,8 +8,10 @@ require (
 	github.com/google/go-containerregistry v0.19.2
 	github.com/google/uuid v1.6.0
 	github.com/kalbhor/tasqueue/v2 v2.3.0
+	github.com/pelletier/go-toml/v2 v2.2.3
 	github.com/valyala/fasthttp v1.50.0
 	github.com/zerodha/fastglue v1.8.1
+	golang.org/x/crypto v0.31.0
 )
 
 require (

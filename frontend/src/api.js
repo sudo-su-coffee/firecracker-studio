@@ -1,6 +1,6 @@
 const webBase = () => (import.meta.env.VITE_FIRECRACKER_API_URL || '/api/v1').replace(/\/$/, '')
-let apiToken = localStorage.getItem('firecracker-studio.api-token') || ''
-export const SetAuthToken = (token = '') => { apiToken = token.trim(); if (apiToken) localStorage.setItem('firecracker-studio.api-token', apiToken); else localStorage.removeItem('firecracker-studio.api-token') }
+let apiToken = ''
+export const SetAuthToken = (token = '') => { apiToken = token.trim() }
 
 const demoBases = [
   { id: 'alpine-3.24.1-x86_64', distribution: 'alpine', version: '3.24.1', architecture: 'x86_64', kernelChannel: '6.1', rootfsFormat: 'ext4', initSystem: 'openrc', status: 'catalog', default: true },
@@ -18,6 +18,7 @@ const json = async (response) => {
 }
 const webRequest = async (path, options = {}) => {
   const response = await fetch(`${webBase()}${path}`, {
+    credentials: 'include',
     ...options,
     headers: { Accept: 'application/json', ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...(apiToken ? { Authorization: `Bearer ${apiToken}` } : {}), ...(options.headers || {}) },
   })
@@ -25,11 +26,14 @@ const webRequest = async (path, options = {}) => {
 }
 const call = (_name, webFallback) => (...args) => webFallback(...args)
 
+export const AuthStatus = () => webRequest('/auth/status')
+export const Login = (username, password) => webRequest('/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) })
+export const Logout = () => webRequest('/auth/logout', { method: 'POST', body: '{}' })
 export const Health = call('Health', () => webRequest('/health'))
 export const Metrics = call('Metrics', () => webRequest('/metrics'))
 export const MetricsStream = (onMessage, onError) => {
   const streamToken = apiToken ? `?access_token=${encodeURIComponent(apiToken)}` : ''
-  const source = new EventSource(`${webBase()}/metrics/stream${streamToken}`)
+  const source = new EventSource(`${webBase()}/metrics/stream${streamToken}`, { withCredentials: true })
   source.addEventListener('metrics', event => {
     try { onMessage(JSON.parse(event.data)) } catch (error) { onError?.(error) }
   })

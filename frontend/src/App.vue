@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { BaseImages, Convert, CreateVM, DeleteVM, Health, Images, MetricsStream, Operations, RuntimeStatus, SetAuthToken, VMAction, VMs } from './api'
+import { AuthStatus, BaseImages, Convert, CreateVM, DeleteVM, Health, Images, Login, Logout, MetricsStream, Operations, RuntimeStatus, SetAuthToken, VMAction, VMs } from './api'
 
 const navItems = [
   { id: 'overview', label: 'Overview', icon: '▦' },
@@ -15,7 +15,8 @@ const navItems = [
 
 const state = reactive({
   tab: 'overview',
-  token: localStorage.getItem('firecracker-studio.api-token') || '',
+  authConfigured: false, authenticated: false, username: '', loginUsername: 'admin', loginPassword: '',
+  token: '',
   source: 'alpine:latest', sourceType: 'oci', baseProfile: 'alpine', architecture: 'native',
   buildMethod: 'native', vcpus: 1, memoryMiB: 512, hostPort: 15432, guestPort: 5432,
   protocol: 'tcp', storageMode: 'ephemeral', persistentDisk: '', selectedVM: '', search: '',
@@ -45,7 +46,9 @@ function ago(value) { if (!value) return '—'; const minutes = Math.max(0, Math
 function statusClass(value) { return String(value || 'unknown').toLowerCase().replace(/\s+/g, '-') }
 function selectTab(tab) { state.tab = tab }
 function startMetrics() { metricsSource?.close(); metricsSource = MetricsStream(metrics => { data.metrics = metrics }, () => {}) }
-function saveToken() { SetAuthToken(state.token); data.message = state.token ? 'API token saved in this browser' : 'API token cleared'; startMetrics(); refresh() }
+async function login() { busy.value = true; try { const result = await Login(state.loginUsername, state.loginPassword); state.authenticated = result.authenticated === true; state.username = result.username || state.loginUsername; state.loginPassword = ''; data.message = 'Signed in'; startMetrics(); await refresh() } catch (error) { data.message = errorText(error) } finally { busy.value = false } }
+async function logout() { await Logout().catch(() => {}); metricsSource?.close(); state.authenticated = false; state.username = ''; data.message = 'Signed out' }
+function saveToken() { SetAuthToken(state.token); data.message = state.token ? 'Legacy API token enabled for this browser session' : 'API token cleared'; startMetrics(); refresh() }
 async function refresh() {
   data.loading = true
   try {
@@ -65,12 +68,26 @@ async function createVM() {
 async function vmAction(id, action) { busy.value = true; try { await VMAction(id, action); data.message = `Workload ${action} requested`; await refresh() } catch (error) { data.message = errorText(error) } finally { busy.value = false } }
 async function deleteVM(id) { if (!window.confirm('Delete this microVM and its managed files?')) return; busy.value = true; try { await DeleteVM(id); state.selectedVM = ''; data.message = 'Workload deleted'; await refresh() } catch (error) { data.message = errorText(error) } finally { busy.value = false } }
 function chooseVM(vm) { state.selectedVM = vm.id; state.tab = 'vms' }
-onMounted(async () => { SetAuthToken(state.token); startMetrics(); await refresh(); refreshTimer = window.setInterval(refresh, 6000) })
+onMounted(async () => { SetAuthToken(state.token); try { const auth = await AuthStatus(); state.authConfigured = auth.configured === true; state.authenticated = auth.authenticated === true; state.username = auth.username || ''; } catch (error) { data.message = errorText(error) } if (!state.authConfigured || state.authenticated) { startMetrics(); await refresh(); refreshTimer = window.setInterval(refresh, 6000) } })
 onBeforeUnmount(() => { metricsSource?.close(); if (refreshTimer) window.clearInterval(refreshTimer) })
 </script>
 
 <template>
-  <div class="studio-shell">
+  <section v-if="state.authConfigured && !state.authenticated" class="login-shell">
+    <div class="login-card panel">
+      <div class="brand-block login-brand"><div class="brand-mark">⌁</div><div><h1>Firecracker<br />Studio</h1><p>Remote microVM console</p></div></div>
+      <span class="section-kicker">SECURE SIGN IN</span>
+      <h2>Open your Studio workspace</h2>
+      <p class="login-copy">Sign in once to manage images, microVMs, logs, networking, storage, and operations from this server.</p>
+      <form @submit.prevent="login">
+        <label>ADMIN USERNAME<input v-model="state.loginUsername" autocomplete="username" required /></label>
+        <label>ADMIN PASSWORD<input v-model="state.loginPassword" type="password" autocomplete="current-password" required /></label>
+        <button class="primary-button" :disabled="busy">{{ busy ? 'Signing in…' : 'Sign in to Studio' }}</button>
+      </form>
+      <p v-if="data.message" class="login-error">{{ data.message }}</p>
+    </div>
+  </section>
+  <div v-else class="studio-shell">
     <aside class="side-nav">
       <div class="brand-block"><div class="brand-mark">⌁</div><div><h1>Firecracker<br />Studio</h1><p><span class="dot success"></span> Host: {{ data.health ? 'Connected' : 'Offline' }}</p></div></div>
       <button class="new-vm-button" @click="selectTab('convert')"><span>＋</span> New MicroVM</button>
@@ -81,7 +98,7 @@ onBeforeUnmount(() => { metricsSource?.close(); if (refreshTimer) window.clearIn
     </aside>
 
     <main class="studio-main">
-      <header class="top-nav"><div class="top-title"><strong>Firecracker Studio</strong><div class="search-box"><span>⌕</span><input v-model="state.search" placeholder="Search resources..." /></div></div><div class="top-actions"><span class="api-pill"><span class="dot success"></span> API: {{ data.health ? 'ACTIVE' : 'OFFLINE' }}</span><button class="icon-button" title="Refresh" @click="refresh">↻</button><button class="avatar-button" title="Settings" @click="selectTab('settings')">◉</button></div></header>
+      <header class="top-nav"><div class="top-title"><strong>Firecracker Studio</strong><div class="search-box"><span>⌕</span><input v-model="state.search" placeholder="Search resources..." /></div></div><div class="top-actions"><span v-if="state.username" class="api-pill">{{ state.username }}</span><span class="api-pill"><span class="dot success"></span> API: {{ data.health ? 'ACTIVE' : 'OFFLINE' }}</span><button class="icon-button" title="Refresh" @click="refresh">↻</button><button class="avatar-button" title="Settings" @click="selectTab('settings')">◉</button><button v-if="state.authenticated" class="icon-button" title="Sign out" @click="logout">⇥</button></div></header>
       <div v-if="data.message" class="toast" :class="{ 'toast-error': data.message.includes('HTTP') || data.message.includes('failed') || data.message.includes('Offline') }" role="status"><span>{{ data.message }}</span><div class="toast-actions"><button v-if="!data.health" class="text-button" @click="refresh">Retry connection</button><button aria-label="Dismiss notification" @click="data.message = ''">×</button></div></div>
 
       <section v-if="state.tab === 'overview'" class="page-content overview-page">
