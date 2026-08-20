@@ -89,7 +89,11 @@ func New(ops *operations.Manager, catalog *images.Catalog, workers *worker.Servi
 	app.GET("/api/v1/auth/status", server.authStatus)
 	app.POST("/api/v1/auth/logout", server.logout)
 	app.GET("/api/v1/metrics", server.metrics)
+	app.GET("/api/v1/system/stats", server.metrics)
+	app.GET("/api/v1/system/info", server.systemInfo)
 	app.GET("/api/v1/logs", server.logs)
+	app.GET("/api/v1/vms/{id}/logs", server.logs)
+	app.GET("/api/v1/vms/{id}/metrics", server.metrics)
 	app.GET("/api/v1/base-images", server.listBaseImages)
 	app.GET("/api/v1/readiness", server.readiness)
 	app.GET("/api/v1/images", server.listImages(catalog))
@@ -199,6 +203,9 @@ func (s *Server) requestLogger(log *slog.Logger) fastglue.FastMiddleware {
 	}
 }
 
+func (s *Server) systemInfo(r *fastglue.Request) error {
+	return r.SendJSON(http.StatusOK, map[string]any{"service": "firecracker-studio", "version": "1.4.0", "runtime": s.runtimeStatus, "api": "v1"})
+}
 func (s *Server) health(r *fastglue.Request) error {
 	return r.SendJSON(http.StatusOK, map[string]string{"status": "ok", "service": "firecracker-studio", "version": "1.4.0"})
 }
