@@ -42,6 +42,7 @@ export const MetricsStream = (onMessage, onError) => {
 }
 export const BaseImages = call('BaseImages', () => webRequest('/base-images').catch(() => ({ images: demoBases })))
 export const Images = call('Images', () => webRequest('/images'))
+export const DeleteImage = call('DeleteImage', digest => webRequest(`/images/${encodeURIComponent(digest)}`, { method: 'DELETE' }))
 export const Operations = call('Operations', () => webRequest('/operations'))
 export const VMs = call('VMs', () => webRequest('/vms'))
 export const Convert = call('Convert', (source, sourceType, baseProfile) => webRequest('/conversions', { method: 'POST', body: JSON.stringify({ source, sourceType, baseProfile, architecture: 'native' }) }))

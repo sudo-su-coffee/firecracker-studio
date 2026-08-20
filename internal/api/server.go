@@ -91,6 +91,7 @@ func New(ops *operations.Manager, catalog *images.Catalog, workers *worker.Servi
 	app.GET("/api/v1/readiness", server.readiness)
 	app.GET("/api/v1/images", server.listImages(catalog))
 	app.POST("/api/v1/images", server.registerImage(catalog))
+	app.DELETE("/api/v1/images/{digest}", server.deleteImage(catalog))
 	app.POST("/api/v1/conversions", server.enqueueConversion(ops, catalog))
 	app.GET("/api/v1/operations", server.listOperations(ops))
 	app.GET("/api/v1/vms", server.listVMs(workers))
@@ -268,6 +269,19 @@ func (s *Server) registerImage(catalog *images.Catalog) fastglue.FastRequestHand
 			return r.SendJSON(http.StatusBadRequest, map[string]string{"error": "invalid_image", "message": err.Error()})
 		}
 		return r.SendJSON(http.StatusCreated, stored)
+	}
+}
+
+func (s *Server) deleteImage(catalog *images.Catalog) fastglue.FastRequestHandler {
+	return func(r *fastglue.Request) error {
+		digest := fmt.Sprint(r.RequestCtx.UserValue("digest"))
+		if digest == "" || digest == "<nil>" {
+			return r.SendJSON(http.StatusBadRequest, map[string]string{"error": "image_digest_required"})
+		}
+		if err := catalog.Delete(digest, true); err != nil {
+			return r.SendJSON(http.StatusNotFound, map[string]string{"error": "image_delete_failed", "message": err.Error()})
+		}
+		return r.SendJSON(http.StatusOK, map[string]string{"status": "deleted", "digest": digest})
 	}
 }
 
