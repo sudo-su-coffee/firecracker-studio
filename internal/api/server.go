@@ -94,6 +94,7 @@ func New(ops *operations.Manager, catalog *images.Catalog, workers *worker.Servi
 	app.GET("/api/v1/readiness", server.readiness)
 	app.GET("/api/v1/images", server.listImages(catalog))
 	app.GET("/api/v1/sources/github", server.resolveGitHubSource)
+	app.POST("/api/v1/sources/yaml", server.parseDeploymentYAML)
 	app.POST("/api/v1/images", server.registerImage(catalog))
 	app.DELETE("/api/v1/images/{digest}", server.deleteImage(catalog))
 	app.POST("/api/v1/conversions", server.enqueueConversion(ops, catalog))
@@ -267,6 +268,14 @@ func (s *Server) resolveGitHubSource(r *fastglue.Request) error {
 		return r.SendJSON(http.StatusBadGateway, map[string]string{"error": "github_resolve_failed", "message": err.Error()})
 	}
 	return r.SendJSON(http.StatusOK, source)
+}
+
+func (s *Server) parseDeploymentYAML(r *fastglue.Request) error {
+	spec, err := sources.ParseDeploymentYAML(r.RequestCtx.PostBody())
+	if err != nil {
+		return r.SendJSON(http.StatusBadRequest, map[string]string{"error": "invalid_deployment_yaml", "message": err.Error()})
+	}
+	return r.SendJSON(http.StatusOK, spec)
 }
 
 func (s *Server) listImages(catalog *images.Catalog) fastglue.FastRequestHandler {
