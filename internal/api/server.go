@@ -14,6 +14,7 @@ import (
 	"github.com/sudo-su-coffee/firecracker-studio/internal/config"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/images"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/operations"
+	"github.com/sudo-su-coffee/firecracker-studio/internal/resources"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/runtime"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/sources"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/worker"
@@ -37,6 +38,11 @@ type Server struct {
 	publicHTTPS      bool
 	eventsMu         sync.RWMutex
 	events           []string
+	resourceMu       sync.RWMutex
+	machineConfigs   map[string]resources.MachineConfig
+	kernels          map[string]resources.Kernel
+	volumes          map[string]resources.Volume
+	vsocks           map[string]resources.VsockConfig
 }
 
 type hostMetrics struct {
@@ -80,7 +86,7 @@ func New(ops *operations.Manager, catalog *images.Catalog, workers *worker.Servi
 		log = slog.Default()
 	}
 	app := fastglue.New()
-	server := &Server{app: app, ops: ops, catalog: catalog, workers: workers, runtimeStatus: runtimeStatus, defaultKernel: defaultKernel, events: make([]string, 0, 100), authUsername: cfg.Admin.Username, authPasswordHash: cfg.Admin.PasswordHash, publicHTTPS: strings.HasPrefix(strings.ToLower(cfg.PublicURL), "https://")}
+	server := &Server{app: app, ops: ops, catalog: catalog, workers: workers, runtimeStatus: runtimeStatus, defaultKernel: defaultKernel, events: make([]string, 0, 100), machineConfigs: make(map[string]resources.MachineConfig), kernels: make(map[string]resources.Kernel), volumes: make(map[string]resources.Volume), vsocks: make(map[string]resources.VsockConfig), authUsername: cfg.Admin.Username, authPasswordHash: cfg.Admin.PasswordHash, publicHTTPS: strings.HasPrefix(strings.ToLower(cfg.PublicURL), "https://")}
 	server.authConfigured = server.authUsername != "" && server.authPasswordHash != ""
 	server.authKey = authKey(server.authPasswordHash)
 	app.After(server.requestLogger(log))
@@ -109,6 +115,26 @@ func New(ops *operations.Manager, catalog *images.Catalog, workers *worker.Servi
 	app.GET("/api/v1/vms", server.listVMs(workers))
 	app.GET("/api/v1/vms/{id}", server.vmDetail(workers))
 	app.GET("/api/v1/vms/{id}/process", server.vmProcess(workers))
+	app.GET("/api/v1/vms/{id}/config", server.getMachineConfig)
+	app.PUT("/api/v1/vms/{id}/config", server.putMachineConfig)
+	app.PUT("/api/v1/vms/{id}/config/patch", server.patchMachineConfig)
+	app.GET("/api/v1/vms/{id}/cpu-config", server.getMachineConfig)
+	app.PUT("/api/v1/vms/{id}/cpu-config", server.putMachineConfig)
+	app.GET("/api/v1/vms/{id}/boot-source", server.getMachineConfig)
+	app.PUT("/api/v1/vms/{id}/boot-source", server.putMachineConfig)
+	app.GET("/api/v1/vms/{id}/smt", server.getMachineConfig)
+	app.PUT("/api/v1/vms/{id}/smt", server.putMachineConfig)
+	app.GET("/api/v1/vms/{id}/constraints", server.constraints)
+	app.GET("/api/v1/images/kernels", server.listKernels)
+	app.POST("/api/v1/images/kernels", server.registerKernel)
+	app.DELETE("/api/v1/images/kernels/{id}", server.deleteKernel)
+	app.POST("/api/v1/images/{id}/clone", server.cloneImage(catalog))
+	app.POST("/api/v1/images/prune", server.pruneImages(catalog))
+	app.GET("/api/v1/volumes", server.listVolumes)
+	app.POST("/api/v1/volumes", server.createVolume)
+	app.DELETE("/api/v1/volumes/{id}", server.deleteVolume)
+	app.GET("/api/v1/vms/{id}/vsock", server.getVsock)
+	app.PUT("/api/v1/vms/{id}/vsock", server.putVsock)
 	app.POST("/api/v1/vms", server.createVM(workers, ops, catalog))
 	app.POST("/api/v1/vms/{id}/start", server.startVM(workers))
 	app.POST("/api/v1/vms/{id}/stop", server.stopVM(workers))
