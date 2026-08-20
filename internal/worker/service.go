@@ -3,9 +3,11 @@ package worker
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,6 +31,7 @@ type Service struct {
 	clients   map[string]*firecracker.Client
 	processes map[string]*exec.Cmd
 	store     *state.Store[VM]
+	network   *NetworkManager
 }
 
 func NewService(factory SocketFactory) (*Service, error) { return newService(factory, nil) }
@@ -46,7 +49,7 @@ func newService(factory SocketFactory, store *state.Store[VM]) (*Service, error)
 		return nil, fmt.Errorf("socket factory is required")
 	}
 	launcher, _ := factory.(processLauncher)
-	s := &Service{factory: factory, launcher: launcher, vms: map[string]VM{}, clients: map[string]*firecracker.Client{}, processes: map[string]*exec.Cmd{}, store: store}
+	s := &Service{factory: factory, launcher: launcher, vms: map[string]VM{}, clients: map[string]*firecracker.Client{}, processes: map[string]*exec.Cmd{}, store: store, network: NewNetworkManager()}
 	if store != nil {
 		items, err := store.Load()
 		if err != nil {
@@ -65,6 +68,28 @@ func newService(factory SocketFactory, store *state.Store[VM]) (*Service, error)
 		_ = s.persist()
 	}
 	return s, nil
+}
+
+func (s *Service) ExecGuest(ctx context.Context, id, command string) ([]byte, error) {
+	if command == "" {
+		return nil, fmt.Errorf("guest command is required")
+	}
+	if len(command) > 4096 {
+		return nil, fmt.Errorf("guest command is too long")
+	}
+	client, _, err := s.lookup(id)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := client.OpenVsock(ctx, 5000)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	if _, err := fmt.Fprintf(conn, "%s\n", command); err != nil {
+		return nil, fmt.Errorf("send guest command: %w", err)
+	}
+	return io.ReadAll(io.LimitReader(conn, 1<<20))
 }
 
 func (s *Service) Create(ctx context.Context, req VMRequest) (VM, error) {
@@ -130,6 +155,12 @@ func (s *Service) Create(ctx context.Context, req VMRequest) (VM, error) {
 			_ = proc.Process.Kill()
 			return VM{}, err
 		}
+		networkConfig, networkErr := s.network.Setup(ctx, id)
+		if networkErr != nil {
+			_ = proc.Process.Kill()
+			return VM{}, fmt.Errorf("configure VM networking: %w", networkErr)
+		}
+		vm.TapDevice, vm.GuestIP, vm.HostIP, vm.GuestMAC = networkConfig.TapDevice, networkConfig.GuestCIDR, networkConfig.HostCIDR, networkConfig.GuestMac
 		if err := client.SetMachineConfig(ctx, firecracker.MachineConfig{VCPUCount: req.VCPUs, MemSizeMiB: req.MemoryMiB}); err != nil {
 			_ = proc.Process.Kill()
 			return VM{}, fmt.Errorf("configure machine: %w", err)
@@ -138,15 +169,31 @@ func (s *Service) Create(ctx context.Context, req VMRequest) (VM, error) {
 		if bootArgs == "" {
 			bootArgs = "console=ttyS0 reboot=k panic=1 pci=off"
 		}
+		bootArgs = networkBootArgs(bootArgs, networkConfig)
 		if err := client.SetBootSource(ctx, firecracker.BootSource{KernelImagePath: req.KernelPath, BootArgs: bootArgs}); err != nil {
 			_ = proc.Process.Kill()
 			return VM{}, fmt.Errorf("configure boot source: %w", err)
+		}
+		if err := client.SetNetworkInterface(ctx, firecracker.NetworkInterface{IfaceID: networkConfig.IfaceID, HostDevName: networkConfig.TapDevice, GuestMAC: networkConfig.GuestMac}); err != nil {
+			_ = proc.Process.Kill()
+			return VM{}, fmt.Errorf("configure network interface: %w", err)
+		}
+		if err := client.SetVsock(ctx, firecracker.Vsock{GuestCID: 3, HostPath: filepath.Join(filepath.Dir(socket), "vsock.sock")}); err != nil {
+			_ = proc.Process.Kill()
+			return VM{}, fmt.Errorf("configure vsock: %w", err)
 		}
 		if err := client.SetDrive(ctx, firecracker.Drive{DriveID: "rootfs", PathOnHost: req.RootfsPath, IsRootDevice: true, IsReadOnly: false}); err != nil {
 			_ = proc.Process.Kill()
 			return VM{}, fmt.Errorf("configure rootfs: %w", err)
 		}
-		vm.Logs = append(vm.Logs, "Firecracker process launched", "kernel and rootfs configured")
+		if len(req.PortMappings) > 0 {
+			if err := s.network.ApplyPortMappings(ctx, strings.Split(networkConfig.GuestCIDR, "/")[0], req.PortMappings); err != nil {
+				_ = proc.Process.Kill()
+				_ = s.network.Teardown(context.WithoutCancel(ctx), id)
+				return VM{}, fmt.Errorf("configure port mappings: %w", err)
+			}
+		}
+		vm.Logs = append(vm.Logs, "Firecracker process launched", "kernel, rootfs, TAP network, and port mappings configured")
 		s.mu.Lock()
 		s.processes[id] = proc
 		s.mu.Unlock()
@@ -285,7 +332,8 @@ func (s *Service) RestoreSnapshot(ctx context.Context, id, snapshotPath, memPath
 
 func (s *Service) Delete(id string) error {
 	s.mu.Lock()
-	if _, ok := s.vms[id]; !ok {
+	vm, ok := s.vms[id]
+	if !ok {
 		s.mu.Unlock()
 		return fmt.Errorf("VM %q not found", id)
 	}
@@ -297,6 +345,10 @@ func (s *Service) Delete(id string) error {
 	delete(s.vms, id)
 	factory, isDir := s.factory.(DirectorySocketFactory)
 	s.mu.Unlock()
+	if s.network != nil && vm.GuestIP != "" {
+		s.network.RemovePortMappings(context.Background(), strings.Split(vm.GuestIP, "/")[0], vm.PortMappings)
+		_ = s.network.Teardown(context.Background(), id)
+	}
 	if isDir {
 		if err := os.RemoveAll(filepath.Join(factory.Dir, id)); err != nil {
 			return fmt.Errorf("remove VM runtime directory: %w", err)

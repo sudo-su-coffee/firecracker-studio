@@ -2,6 +2,7 @@ package api
 
 import (
 	"bufio"
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
@@ -10,9 +11,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sudo-su-coffee/firecracker-studio/internal/config"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/images"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/operations"
-	studiort "github.com/sudo-su-coffee/firecracker-studio/internal/runtime"
+	"github.com/sudo-su-coffee/firecracker-studio/internal/runtime"
+	"github.com/sudo-su-coffee/firecracker-studio/internal/sources"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/worker"
 	"github.com/valyala/fasthttp"
 	"github.com/zerodha/fastglue"
@@ -21,14 +24,19 @@ import (
 )
 
 type Server struct {
-	app           *fastglue.Fastglue
-	ops           *operations.Manager
-	catalog       *images.Catalog
-	workers       *worker.Service
-	runtimeStatus studiort.Status
-	defaultKernel string
-	eventsMu      sync.RWMutex
-	events        []string
+	app              *fastglue.Fastglue
+	ops              *operations.Manager
+	catalog          *images.Catalog
+	workers          *worker.Service
+	runtimeStatus    runtime.Status
+	defaultKernel    string
+	authConfigured   bool
+	authUsername     string
+	authPasswordHash string
+	authKey          []byte
+	publicHTTPS      bool
+	eventsMu         sync.RWMutex
+	events           []string
 }
 
 type hostMetrics struct {
@@ -47,17 +55,18 @@ type hostMetrics struct {
 }
 
 type metricsSnapshot struct {
-	Timestamp  time.Time   `json:"timestamp"`
-	Workers    int         `json:"workers"`
-	MicroVMs   int         `json:"microvms"`
-	RunningVMs int         `json:"runningVms"`
-	Images     int         `json:"images"`
-	Operations int         `json:"operations"`
-	Healthy    bool        `json:"healthy"`
-	Host       hostMetrics `json:"host"`
+	Timestamp         time.Time   `json:"timestamp"`
+	Workers           int         `json:"workers"`
+	MicroVMs          int         `json:"microvms"`
+	RunningVMs        int         `json:"runningVms"`
+	Images            int         `json:"images"`
+	ImageStorageBytes int64       `json:"imageStorageBytes"`
+	Operations        int         `json:"operations"`
+	Healthy           bool        `json:"healthy"`
+	Host              hostMetrics `json:"host"`
 }
 
-func New(ops *operations.Manager, catalog *images.Catalog, workers *worker.Service, runtimeStatus studiort.Status, defaultKernel string, log *slog.Logger) (*Server, error) {
+func New(ops *operations.Manager, catalog *images.Catalog, workers *worker.Service, runtimeStatus runtime.Status, defaultKernel string, cfg config.Config, log *slog.Logger) (*Server, error) {
 	if ops == nil {
 		return nil, fmt.Errorf("operation manager is required")
 	}
@@ -71,15 +80,23 @@ func New(ops *operations.Manager, catalog *images.Catalog, workers *worker.Servi
 		log = slog.Default()
 	}
 	app := fastglue.New()
-	server := &Server{app: app, ops: ops, catalog: catalog, workers: workers, runtimeStatus: runtimeStatus, defaultKernel: defaultKernel, events: make([]string, 0, 100)}
+	server := &Server{app: app, ops: ops, catalog: catalog, workers: workers, runtimeStatus: runtimeStatus, defaultKernel: defaultKernel, events: make([]string, 0, 100), authUsername: cfg.Admin.Username, authPasswordHash: cfg.Admin.PasswordHash, publicHTTPS: strings.HasPrefix(strings.ToLower(cfg.PublicURL), "https://")}
+	server.authConfigured = server.authUsername != "" && server.authPasswordHash != ""
+	server.authKey = authKey(server.authPasswordHash)
 	app.After(server.requestLogger(log))
 	app.GET("/api/v1/health", server.health)
+	app.POST("/api/v1/auth/login", server.login)
+	app.GET("/api/v1/auth/status", server.authStatus)
+	app.POST("/api/v1/auth/logout", server.logout)
 	app.GET("/api/v1/metrics", server.metrics)
 	app.GET("/api/v1/logs", server.logs)
 	app.GET("/api/v1/base-images", server.listBaseImages)
 	app.GET("/api/v1/readiness", server.readiness)
 	app.GET("/api/v1/images", server.listImages(catalog))
+	app.GET("/api/v1/sources/github", server.resolveGitHubSource)
+	app.POST("/api/v1/sources/yaml", server.parseDeploymentYAML)
 	app.POST("/api/v1/images", server.registerImage(catalog))
+	app.DELETE("/api/v1/images/{digest}", server.deleteImage(catalog))
 	app.POST("/api/v1/conversions", server.enqueueConversion(ops, catalog))
 	app.GET("/api/v1/operations", server.listOperations(ops))
 	app.GET("/api/v1/vms", server.listVMs(workers))
@@ -88,6 +105,7 @@ func New(ops *operations.Manager, catalog *images.Catalog, workers *worker.Servi
 	app.POST("/api/v1/vms/{id}/stop", server.stopVM(workers))
 	app.POST("/api/v1/vms/{id}/pause", server.pauseVM(workers))
 	app.POST("/api/v1/vms/{id}/resume", server.resumeVM(workers))
+	app.POST("/api/v1/vms/{id}/terminal", server.execGuest(workers))
 	app.DELETE("/api/v1/vms/{id}", server.deleteVM(workers))
 	app.POST("/api/v1/vms/{id}/snapshots", server.createSnapshot(workers))
 	app.POST("/api/v1/vms/{id}/snapshots/restore", server.restoreSnapshot(workers))
@@ -103,9 +121,7 @@ func (s *Server) Handler() func(*fasthttp.RequestCtx) {
 	handler := s.app.Handler()
 	return func(ctx *fasthttp.RequestCtx) {
 		if !s.authorized(ctx) {
-			ctx.SetStatusCode(http.StatusUnauthorized)
-			ctx.Response.Header.SetContentType("application/json")
-			ctx.SetBodyString(`{"error":"unauthorized","message":"provide FIRECRACKER_STUDIO_TOKEN as a Bearer token"}`)
+			s.authError(ctx)
 			return
 		}
 		if string(ctx.Path()) == "/api/v1/metrics/stream" {
@@ -136,21 +152,28 @@ func (s *Server) ListenAndServe(address string) error {
 }
 
 func (s *Server) authorized(ctx *fasthttp.RequestCtx) bool {
+	path := string(ctx.Path())
+	if (path == "/api/v1/health" || path == "/api/v1/auth/login" || path == "/api/v1/auth/status") && (ctx.IsGet() || path == "/api/v1/auth/login") {
+		return true
+	}
 	token := strings.TrimSpace(os.Getenv("FIRECRACKER_STUDIO_TOKEN"))
-	if token == "" {
-		return true
-	}
-	if string(ctx.Path()) == "/api/v1/health" && ctx.IsGet() {
-		return true
-	}
-	want := "Bearer " + token
-	got := string(ctx.Request.Header.Peek("Authorization"))
-	if got == "" {
-		if queryToken := string(ctx.QueryArgs().Peek("access_token")); queryToken != "" {
-			got = "Bearer " + queryToken
+	if token != "" {
+		want := "Bearer " + token
+		got := string(ctx.Request.Header.Peek("Authorization"))
+		if got == "" {
+			if queryToken := string(ctx.QueryArgs().Peek("access_token")); queryToken != "" {
+				got = "Bearer " + queryToken
+			}
+		}
+		if subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1 {
+			return true
 		}
 	}
-	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
+	if !s.authConfigured {
+		return true
+	}
+	authenticated, _, _ := s.sessionFromRequest(ctx)
+	return authenticated
 }
 
 func (s *Server) requestLogger(log *slog.Logger) fastglue.FastMiddleware {
@@ -196,7 +219,7 @@ func (s *Server) snapshot() metricsSnapshot {
 	}
 	return metricsSnapshot{
 		Timestamp: time.Now().UTC(), Workers: 1, MicroVMs: len(vms), RunningVMs: running,
-		Images: len(s.catalog.List()), Operations: len(s.ops.List()), Healthy: true, Host: readHostMetrics(),
+		Images: len(s.catalog.List()), ImageStorageBytes: s.catalog.StorageBytes(), Operations: len(s.ops.List()), Healthy: true, Host: readHostMetrics(),
 	}
 }
 
@@ -235,6 +258,26 @@ func (s *Server) listBaseImages(r *fastglue.Request) error {
 	return r.SendJSON(http.StatusOK, map[string]any{"images": images.ManagedBaseImages()})
 }
 
+func (s *Server) resolveGitHubSource(r *fastglue.Request) error {
+	reference := strings.TrimSpace(string(r.RequestCtx.QueryArgs().Peek("reference")))
+	if reference == "" {
+		return r.SendJSON(http.StatusBadRequest, map[string]string{"error": "github_reference_required"})
+	}
+	source, err := sources.ResolveGitHub(context.Background(), reference)
+	if err != nil {
+		return r.SendJSON(http.StatusBadGateway, map[string]string{"error": "github_resolve_failed", "message": err.Error()})
+	}
+	return r.SendJSON(http.StatusOK, source)
+}
+
+func (s *Server) parseDeploymentYAML(r *fastglue.Request) error {
+	spec, err := sources.ParseDeploymentYAML(r.RequestCtx.PostBody())
+	if err != nil {
+		return r.SendJSON(http.StatusBadRequest, map[string]string{"error": "invalid_deployment_yaml", "message": err.Error()})
+	}
+	return r.SendJSON(http.StatusOK, spec)
+}
+
 func (s *Server) listImages(catalog *images.Catalog) fastglue.FastRequestHandler {
 	return func(r *fastglue.Request) error {
 		return r.SendJSON(http.StatusOK, map[string]any{"images": catalog.List()})
@@ -252,6 +295,19 @@ func (s *Server) registerImage(catalog *images.Catalog) fastglue.FastRequestHand
 			return r.SendJSON(http.StatusBadRequest, map[string]string{"error": "invalid_image", "message": err.Error()})
 		}
 		return r.SendJSON(http.StatusCreated, stored)
+	}
+}
+
+func (s *Server) deleteImage(catalog *images.Catalog) fastglue.FastRequestHandler {
+	return func(r *fastglue.Request) error {
+		digest := fmt.Sprint(r.RequestCtx.UserValue("digest"))
+		if digest == "" || digest == "<nil>" {
+			return r.SendJSON(http.StatusBadRequest, map[string]string{"error": "image_digest_required"})
+		}
+		if err := catalog.Delete(digest, true); err != nil {
+			return r.SendJSON(http.StatusNotFound, map[string]string{"error": "image_delete_failed", "message": err.Error()})
+		}
+		return r.SendJSON(http.StatusOK, map[string]string{"status": "deleted", "digest": digest})
 	}
 }
 
@@ -416,6 +472,25 @@ func (s *Server) snapshotAction(service *worker.Service, restore bool) fastglue.
 			return r.SendJSON(http.StatusBadRequest, map[string]string{"error": "snapshot_operation_failed", "message": err.Error()})
 		}
 		return r.SendJSON(http.StatusAccepted, map[string]string{"status": "accepted", "vmId": id})
+	}
+}
+
+func (s *Server) execGuest(service *worker.Service) fastglue.FastRequestHandler {
+	return func(r *fastglue.Request) error {
+		id := fmt.Sprint(r.RequestCtx.UserValue("id"))
+		var input struct {
+			Command string `json:"command"`
+		}
+		if err := r.Decode(&input, "json"); err != nil {
+			return r.SendJSON(http.StatusBadRequest, map[string]string{"error": "invalid_request"})
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		output, err := service.ExecGuest(ctx, id, input.Command)
+		if err != nil {
+			return r.SendJSON(http.StatusBadGateway, map[string]string{"error": "guest_command_failed", "message": err.Error()})
+		}
+		return r.SendJSON(http.StatusOK, map[string]any{"command": input.Command, "output": string(output)})
 	}
 }
 

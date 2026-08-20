@@ -1,6 +1,6 @@
 const webBase = () => (import.meta.env.VITE_FIRECRACKER_API_URL || '/api/v1').replace(/\/$/, '')
-let apiToken = localStorage.getItem('firecracker-studio.api-token') || ''
-export const SetAuthToken = (token = '') => { apiToken = token.trim(); if (apiToken) localStorage.setItem('firecracker-studio.api-token', apiToken); else localStorage.removeItem('firecracker-studio.api-token') }
+let apiToken = ''
+export const SetAuthToken = (token = '') => { apiToken = token.trim() }
 
 const demoBases = [
   { id: 'alpine-3.24.1-x86_64', distribution: 'alpine', version: '3.24.1', architecture: 'x86_64', kernelChannel: '6.1', rootfsFormat: 'ext4', initSystem: 'openrc', status: 'catalog', default: true },
@@ -18,6 +18,7 @@ const json = async (response) => {
 }
 const webRequest = async (path, options = {}) => {
   const response = await fetch(`${webBase()}${path}`, {
+    credentials: 'include',
     ...options,
     headers: { Accept: 'application/json', ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...(apiToken ? { Authorization: `Bearer ${apiToken}` } : {}), ...(options.headers || {}) },
   })
@@ -25,11 +26,14 @@ const webRequest = async (path, options = {}) => {
 }
 const call = (_name, webFallback) => (...args) => webFallback(...args)
 
+export const AuthStatus = () => webRequest('/auth/status')
+export const Login = (username, password) => webRequest('/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) })
+export const Logout = () => webRequest('/auth/logout', { method: 'POST', body: '{}' })
 export const Health = call('Health', () => webRequest('/health'))
 export const Metrics = call('Metrics', () => webRequest('/metrics'))
 export const MetricsStream = (onMessage, onError) => {
   const streamToken = apiToken ? `?access_token=${encodeURIComponent(apiToken)}` : ''
-  const source = new EventSource(`${webBase()}/metrics/stream${streamToken}`)
+  const source = new EventSource(`${webBase()}/metrics/stream${streamToken}`, { withCredentials: true })
   source.addEventListener('metrics', event => {
     try { onMessage(JSON.parse(event.data)) } catch (error) { onError?.(error) }
   })
@@ -38,10 +42,13 @@ export const MetricsStream = (onMessage, onError) => {
 }
 export const BaseImages = call('BaseImages', () => webRequest('/base-images').catch(() => ({ images: demoBases })))
 export const Images = call('Images', () => webRequest('/images'))
+export const DeleteImage = call('DeleteImage', digest => webRequest(`/images/${encodeURIComponent(digest)}`, { method: 'DELETE' }))
+export const ResolveGitHub = call('ResolveGitHub', reference => webRequest(`/sources/github?reference=${encodeURIComponent(reference)}`))
 export const Operations = call('Operations', () => webRequest('/operations'))
 export const VMs = call('VMs', () => webRequest('/vms'))
 export const Convert = call('Convert', (source, sourceType, baseProfile) => webRequest('/conversions', { method: 'POST', body: JSON.stringify({ source, sourceType, baseProfile, architecture: 'native' }) }))
 export const CreateVM = call('CreateVM', (artifactDigest, vcpus, memoryMiB, imageReference = '', portMappings = [], storageMode = 'ephemeral', persistentDisk = '') => webRequest('/vms', { method: 'POST', body: JSON.stringify({ artifactDigest, imageReference, vcpus, memoryMiB, portMappings, storageMode, persistentDisk }) }))
-export const VMAction = call('VMAction', (id, action) => webRequest(`/vms/${encodeURIComponent(id)}/${action}`, { method: 'POST', body: '{}' }))
+export const VMAction = call('VMAction', (id, action) => webRequest(`/vms/${id}/${action}`, { method: 'POST' }))
+export const GuestCommand = call('GuestCommand', (id, command) => webRequest(`/vms/${id}/terminal`, { method: 'POST', body: JSON.stringify({ command }) }))
 export const DeleteVM = call('DeleteVM', id => webRequest(`/vms/${encodeURIComponent(id)}`, { method: 'DELETE' }))
 export const RuntimeStatus = call('RuntimeStatus', () => webRequest('/readiness').then(result => ({ platform: 'web', installed: result.runtime?.installed, firecracker: result.runtime?.firecracker, jailer: result.runtime?.jailer, kvm: result.runtime?.kvm, tap: result.runtime?.tap, kernel: result.runtime?.kernel, rootfs: result.runtime?.rootfs, ready: result.ready, message: result.message })))

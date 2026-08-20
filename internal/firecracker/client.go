@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"path/filepath"
 	"time"
 )
 
@@ -129,6 +130,19 @@ func (c *Client) CreateSnapshot(ctx context.Context, snapshot SnapshotCreate) er
 }
 func (c *Client) LoadSnapshot(ctx context.Context, snapshot SnapshotLoad) error {
 	return c.put(ctx, "/snapshot/load", snapshot)
+}
+
+func (c *Client) OpenVsock(ctx context.Context, port uint32) (net.Conn, error) {
+	dialer := net.Dialer{Timeout: c.http.Timeout}
+	conn, err := dialer.DialContext(ctx, "unix", filepath.Join(filepath.Dir(c.socket), "vsock.sock"))
+	if err != nil {
+		return nil, fmt.Errorf("connect vsock proxy: %w", err)
+	}
+	if _, err := fmt.Fprintf(conn, "CONNECT %d\n", port); err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("vsock handshake: %w", err)
+	}
+	return conn, nil
 }
 
 func (c *Client) put(ctx context.Context, path string, payload any) error {
