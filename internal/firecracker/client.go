@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"path/filepath"
 	"time"
 )
 
@@ -133,7 +134,7 @@ func (c *Client) LoadSnapshot(ctx context.Context, snapshot SnapshotLoad) error 
 
 func (c *Client) OpenVsock(ctx context.Context, port uint32) (net.Conn, error) {
 	dialer := net.Dialer{Timeout: c.http.Timeout}
-	conn, err := dialer.DialContext(ctx, "unix", c.socket+".vsock")
+	conn, err := dialer.DialContext(ctx, "unix", filepath.Join(filepath.Dir(c.socket), "vsock.sock"))
 	if err != nil {
 		return nil, fmt.Errorf("connect vsock proxy: %w", err)
 	}

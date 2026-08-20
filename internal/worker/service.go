@@ -178,6 +178,10 @@ func (s *Service) Create(ctx context.Context, req VMRequest) (VM, error) {
 			_ = proc.Process.Kill()
 			return VM{}, fmt.Errorf("configure network interface: %w", err)
 		}
+		if err := client.SetVsock(ctx, firecracker.Vsock{GuestCID: 3, HostPath: filepath.Join(filepath.Dir(socket), "vsock.sock")}); err != nil {
+			_ = proc.Process.Kill()
+			return VM{}, fmt.Errorf("configure vsock: %w", err)
+		}
 		if err := client.SetDrive(ctx, firecracker.Drive{DriveID: "rootfs", PathOnHost: req.RootfsPath, IsRootDevice: true, IsReadOnly: false}); err != nil {
 			_ = proc.Process.Kill()
 			return VM{}, fmt.Errorf("configure rootfs: %w", err)
