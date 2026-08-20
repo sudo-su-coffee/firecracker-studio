@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -65,6 +66,28 @@ func newService(factory SocketFactory, store *state.Store[VM]) (*Service, error)
 		_ = s.persist()
 	}
 	return s, nil
+}
+
+func (s *Service) ExecGuest(ctx context.Context, id, command string) ([]byte, error) {
+	if command == "" {
+		return nil, fmt.Errorf("guest command is required")
+	}
+	if len(command) > 4096 {
+		return nil, fmt.Errorf("guest command is too long")
+	}
+	client, _, err := s.lookup(id)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := client.OpenVsock(ctx, 5000)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	if _, err := fmt.Fprintf(conn, "%s\n", command); err != nil {
+		return nil, fmt.Errorf("send guest command: %w", err)
+	}
+	return io.ReadAll(io.LimitReader(conn, 1<<20))
 }
 
 func (s *Service) Create(ctx context.Context, req VMRequest) (VM, error) {

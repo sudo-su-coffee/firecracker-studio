@@ -104,6 +104,7 @@ func New(ops *operations.Manager, catalog *images.Catalog, workers *worker.Servi
 	app.POST("/api/v1/vms/{id}/stop", server.stopVM(workers))
 	app.POST("/api/v1/vms/{id}/pause", server.pauseVM(workers))
 	app.POST("/api/v1/vms/{id}/resume", server.resumeVM(workers))
+	app.POST("/api/v1/vms/{id}/terminal", server.execGuest(workers))
 	app.DELETE("/api/v1/vms/{id}", server.deleteVM(workers))
 	app.POST("/api/v1/vms/{id}/snapshots", server.createSnapshot(workers))
 	app.POST("/api/v1/vms/{id}/snapshots/restore", server.restoreSnapshot(workers))
@@ -462,6 +463,25 @@ func (s *Server) snapshotAction(service *worker.Service, restore bool) fastglue.
 			return r.SendJSON(http.StatusBadRequest, map[string]string{"error": "snapshot_operation_failed", "message": err.Error()})
 		}
 		return r.SendJSON(http.StatusAccepted, map[string]string{"status": "accepted", "vmId": id})
+	}
+}
+
+func (s *Server) execGuest(service *worker.Service) fastglue.FastRequestHandler {
+	return func(r *fastglue.Request) error {
+		id := fmt.Sprint(r.RequestCtx.UserValue("id"))
+		var input struct {
+			Command string `json:"command"`
+		}
+		if err := r.Decode(&input, "json"); err != nil {
+			return r.SendJSON(http.StatusBadRequest, map[string]string{"error": "invalid_request"})
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		output, err := service.ExecGuest(ctx, id, input.Command)
+		if err != nil {
+			return r.SendJSON(http.StatusBadGateway, map[string]string{"error": "guest_command_failed", "message": err.Error()})
+		}
+		return r.SendJSON(http.StatusOK, map[string]any{"command": input.Command, "output": string(output)})
 	}
 }
 
