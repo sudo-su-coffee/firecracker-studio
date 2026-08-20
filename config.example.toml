@@ -1,0 +1,26 @@
+# Firecracker Studio remote web-console configuration.
+# Copy to the configured state directory as config.toml.
+
+app_name = "firecracker-studio"
+listen = "127.0.0.1:7822"
+public_url = "https://studio.example.com"
+state_dir = "/var/lib/firecracker-studio"
+artifact_dir = "/var/lib/firecracker-studio/artifacts"
+operation_retention = "24h"
+worker_timeout = "30s"
+operation_workers = 2
+
+[admin]
+username = "admin"
+email = "admin@example.com"
+# Store a bcrypt password hash here. Never store the plaintext password.
+password_hash = "$2a$12$replace-with-a-bcrypt-hash"
+
+[notifications]
+enabled = false
+smtp_host = "smtp.example.com"
+smtp_port = 587
+smtp_username = "studio@example.com"
+smtp_password_file = "/etc/firecracker-studio/smtp-password"
+from = "studio@example.com"
+recipients = ["admin@example.com"]
