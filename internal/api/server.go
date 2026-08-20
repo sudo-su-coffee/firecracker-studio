@@ -53,14 +53,15 @@ type hostMetrics struct {
 }
 
 type metricsSnapshot struct {
-	Timestamp  time.Time   `json:"timestamp"`
-	Workers    int         `json:"workers"`
-	MicroVMs   int         `json:"microvms"`
-	RunningVMs int         `json:"runningVms"`
-	Images     int         `json:"images"`
-	Operations int         `json:"operations"`
-	Healthy    bool        `json:"healthy"`
-	Host       hostMetrics `json:"host"`
+	Timestamp         time.Time   `json:"timestamp"`
+	Workers           int         `json:"workers"`
+	MicroVMs          int         `json:"microvms"`
+	RunningVMs        int         `json:"runningVms"`
+	Images            int         `json:"images"`
+	ImageStorageBytes int64       `json:"imageStorageBytes"`
+	Operations        int         `json:"operations"`
+	Healthy           bool        `json:"healthy"`
+	Host              hostMetrics `json:"host"`
 }
 
 func New(ops *operations.Manager, catalog *images.Catalog, workers *worker.Service, runtimeStatus studiort.Status, defaultKernel string, cfg config.Config, log *slog.Logger) (*Server, error) {
@@ -213,7 +214,7 @@ func (s *Server) snapshot() metricsSnapshot {
 	}
 	return metricsSnapshot{
 		Timestamp: time.Now().UTC(), Workers: 1, MicroVMs: len(vms), RunningVMs: running,
-		Images: len(s.catalog.List()), Operations: len(s.ops.List()), Healthy: true, Host: readHostMetrics(),
+		Images: len(s.catalog.List()), ImageStorageBytes: s.catalog.StorageBytes(), Operations: len(s.ops.List()), Healthy: true, Host: readHostMetrics(),
 	}
 }
 
