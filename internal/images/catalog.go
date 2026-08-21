@@ -129,6 +129,30 @@ func (c *Catalog) Delete(digest string, removeArtifacts bool) error {
 	return c.saveLocked()
 }
 
+func (c *Catalog) PruneFailedBefore(cutoff time.Time, removeArtifacts bool) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	removed := 0
+	for digest, image := range c.images {
+		if image.Status != "failed" || image.UpdatedAt.After(cutoff) {
+			continue
+		}
+		if removeArtifacts {
+			for _, path := range []string{image.KernelPath, image.RootfsPath, image.ArtifactPath} {
+				if path != "" {
+					_ = os.Remove(path)
+				}
+			}
+		}
+		delete(c.images, digest)
+		removed++
+	}
+	if removed == 0 {
+		return 0, nil
+	}
+	return removed, c.saveLocked()
+}
+
 func (c *Catalog) StorageBytes() int64 {
 	c.mu.RLock()
 	defer c.mu.RUnlock()

@@ -94,6 +94,34 @@ func newConfiguredService(factory SocketFactory, store *state.Store[VM], clientT
 	return s, nil
 }
 
+func (s *Service) ApplyMachineConfig(ctx context.Context, id string, vcpus, memoryMiB int, smt bool) error {
+	client, vm, err := s.lookup(id)
+	if err != nil {
+		return err
+	}
+	if vm.State != "running" && vm.State != "paused" {
+		return nil
+	}
+	return client.SetMachineConfig(ctx, firecracker.MachineConfig{VCPUCount: vcpus, MemSizeMiB: memoryMiB, Smt: smt})
+}
+
+func (s *Service) ApplyVsock(ctx context.Context, id string, guestCID uint32, hostPath string) error {
+	client, vm, err := s.lookup(id)
+	if err != nil {
+		return err
+	}
+	if vm.State != "running" && vm.State != "paused" {
+		return nil
+	}
+	if guestCID == 0 {
+		guestCID = s.guestAgentCID
+	}
+	if hostPath == "" {
+		hostPath = filepath.Join(filepath.Dir(vm.SocketPath), "vsock.sock")
+	}
+	return client.SetVsock(ctx, firecracker.Vsock{GuestCID: guestCID, HostPath: hostPath})
+}
+
 func (s *Service) ExecGuest(ctx context.Context, id, command string) ([]byte, error) {
 	if command == "" {
 		return nil, fmt.Errorf("guest command is required")

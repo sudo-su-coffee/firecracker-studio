@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/sudo-su-coffee/firecracker-studio/internal/images"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/resources"
+	"github.com/sudo-su-coffee/firecracker-studio/internal/worker"
 	"github.com/zerodha/fastglue"
 )
 
@@ -28,26 +30,35 @@ func (s *Server) getMachineConfig(r *fastglue.Request) error {
 	}
 	return r.SendJSON(http.StatusOK, c)
 }
-func (s *Server) putMachineConfig(r *fastglue.Request) error {
-	var c resources.MachineConfig
-	if err := r.Decode(&c, "json"); err != nil {
-		return r.SendJSON(400, map[string]string{"error": err.Error()})
+func (s *Server) putMachineConfig(service *worker.Service) fastglue.FastRequestHandler {
+	return func(r *fastglue.Request) error {
+		var c resources.MachineConfig
+		if err := r.Decode(&c, "json"); err != nil {
+			return r.SendJSON(400, map[string]string{"error": err.Error()})
+		}
+		if err := resources.ValidateMachine(c); err != nil {
+			return r.SendJSON(400, map[string]string{"error": err.Error()})
+		}
+		id := resourceID(r)
+		c.UpdatedAt = time.Now().UTC()
+		s.resourceMu.Lock()
+		s.machineConfigs[id] = c
+		err := s.saveResourcesLocked()
+		s.resourceMu.Unlock()
+		if err != nil {
+			return r.SendJSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), s.workerTimeout)
+		defer cancel()
+		if err := service.ApplyMachineConfig(ctx, id, c.VCPUs, c.MemoryMiB, c.SMT); err != nil {
+			return r.SendJSON(http.StatusBadRequest, map[string]string{"error": "live_machine_config_failed", "message": err.Error()})
+		}
+		return r.SendJSON(http.StatusOK, c)
 	}
-	if err := resources.ValidateMachine(c); err != nil {
-		return r.SendJSON(400, map[string]string{"error": err.Error()})
-	}
-	id := resourceID(r)
-	c.UpdatedAt = time.Now().UTC()
-	s.resourceMu.Lock()
-	s.machineConfigs[id] = c
-	err := s.saveResourcesLocked()
-	s.resourceMu.Unlock()
-	if err != nil {
-		return r.SendJSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
-	}
-	return r.SendJSON(http.StatusOK, c)
 }
-func (s *Server) patchMachineConfig(r *fastglue.Request) error { return s.putMachineConfig(r) }
+func (s *Server) patchMachineConfig(service *worker.Service) fastglue.FastRequestHandler {
+	return s.putMachineConfig(service)
+}
 func (s *Server) constraints(r *fastglue.Request) error {
 	return r.SendJSON(http.StatusOK, map[string]any{"maxVCPUs": 256, "minMemoryMiB": 128, "kvm": s.runtimeStatus.KVM})
 }
@@ -114,7 +125,21 @@ func (s *Server) cloneImage(c *images.Catalog) fastglue.FastRequestHandler {
 }
 func (s *Server) pruneImages(c *images.Catalog) fastglue.FastRequestHandler {
 	return func(r *fastglue.Request) error {
-		return r.SendJSON(http.StatusOK, map[string]any{"status": "dry_run", "removed": 0, "message": "prune requires explicit retention policy"})
+		var req struct {
+			OlderThanHours  int  `json:"olderThanHours"`
+			RemoveArtifacts bool `json:"removeArtifacts"`
+		}
+		if err := r.Decode(&req, "json"); err != nil {
+			return r.SendJSON(http.StatusBadRequest, map[string]string{"error": "invalid_request", "message": err.Error()})
+		}
+		if req.OlderThanHours < 1 || req.OlderThanHours > 8760 {
+			return r.SendJSON(http.StatusBadRequest, map[string]string{"error": "olderThanHours must be between 1 and 8760"})
+		}
+		removed, err := c.PruneFailedBefore(time.Now().UTC().Add(-time.Duration(req.OlderThanHours)*time.Hour), req.RemoveArtifacts)
+		if err != nil {
+			return r.SendJSON(http.StatusInternalServerError, map[string]string{"error": "prune_failed", "message": err.Error()})
+		}
+		return r.SendJSON(http.StatusOK, map[string]any{"status": "pruned", "removed": removed, "failedOnly": true, "removeArtifacts": req.RemoveArtifacts})
 	}
 }
 func (s *Server) listVolumes(r *fastglue.Request) error {
@@ -169,21 +194,28 @@ func (s *Server) getVsock(r *fastglue.Request) error {
 	s.resourceMu.RUnlock()
 	return r.SendJSON(http.StatusOK, v)
 }
-func (s *Server) putVsock(r *fastglue.Request) error {
-	var v resources.VsockConfig
-	if err := r.Decode(&v, "json"); err != nil {
-		return r.SendJSON(400, map[string]string{"error": err.Error()})
+func (s *Server) putVsock(service *worker.Service) fastglue.FastRequestHandler {
+	return func(r *fastglue.Request) error {
+		var v resources.VsockConfig
+		if err := r.Decode(&v, "json"); err != nil {
+			return r.SendJSON(400, map[string]string{"error": err.Error()})
+		}
+		if v.GuestCID == 0 {
+			v.GuestCID = 3
+		}
+		id := resourceID(r)
+		s.resourceMu.Lock()
+		s.vsocks[id] = v
+		err := s.saveResourcesLocked()
+		s.resourceMu.Unlock()
+		if err != nil {
+			return r.SendJSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), s.workerTimeout)
+		defer cancel()
+		if err := service.ApplyVsock(ctx, id, v.GuestCID, v.HostPath); err != nil {
+			return r.SendJSON(http.StatusBadRequest, map[string]string{"error": "live_vsock_config_failed", "message": err.Error()})
+		}
+		return r.SendJSON(http.StatusOK, v)
 	}
-	if v.GuestCID == 0 {
-		v.GuestCID = 3
-	}
-	id := resourceID(r)
-	s.resourceMu.Lock()
-	s.vsocks[id] = v
-	err := s.saveResourcesLocked()
-	s.resourceMu.Unlock()
-	if err != nil {
-		return r.SendJSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
-	}
-	return r.SendJSON(http.StatusOK, v)
 }

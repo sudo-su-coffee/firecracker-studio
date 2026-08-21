@@ -48,7 +48,7 @@ export const ImageTemplates = call('ImageTemplates', () => webRequest('/images/t
 export const RegisterImage = call('RegisterImage', image => webRequest('/images', { method: 'POST', body: JSON.stringify(image) }))
 export const DeleteImage = call('DeleteImage', digest => webRequest(`/images/${encodeURIComponent(digest)}`, { method: 'DELETE' }))
 export const CloneImage = call('CloneImage', id => webRequest(`/images/${encodeURIComponent(id)}/clone`, { method: 'POST' }))
-export const PruneImages = call('PruneImages', () => webRequest('/images/prune', { method: 'POST' }))
+export const PruneImages = call('PruneImages', (olderThanHours = 24, removeArtifacts = false) => webRequest('/images/prune', { method: 'POST', body: JSON.stringify({ olderThanHours, removeArtifacts }) }))
 export const ResolveGitHub = call('ResolveGitHub', reference => webRequest(`/sources/github?reference=${encodeURIComponent(reference)}`))
 export const ValidateYAML = call('ValidateYAML', yaml => webRequest('/sources/yaml', { method: 'POST', body: JSON.stringify(typeof yaml === 'string' ? { yaml } : yaml) }))
 export const Operations = call('Operations', () => webRequest('/operations'))

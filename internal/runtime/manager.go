@@ -46,7 +46,17 @@ func NewManager() *Manager {
 	if err != nil || base == "" {
 		base = "."
 	}
-	return &Manager{root: filepath.Join(base, "FirecrackerStudio", "runtime"), http: &http.Client{Timeout: 10 * time.Minute}}
+	return NewConfiguredManager(filepath.Join(base, "FirecrackerStudio", "runtime"), 10*time.Minute)
+}
+
+func NewConfiguredManager(root string, downloadTimeout time.Duration) *Manager {
+	if root == "" {
+		root = "."
+	}
+	if downloadTimeout <= 0 {
+		downloadTimeout = 10 * time.Minute
+	}
+	return &Manager{root: root, http: &http.Client{Timeout: downloadTimeout}}
 }
 
 func (m *Manager) Root() string { return m.root }

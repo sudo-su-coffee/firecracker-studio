@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -97,10 +98,10 @@ func New(ops *operations.Manager, catalog *images.Catalog, workers *worker.Servi
 	if len(configuredNotifiers) > 0 {
 		notifier = configuredNotifiers[0]
 	}
-	server := &Server{app: app, ops: ops, catalog: catalog, workers: workers, runtimeStatus: runtimeStatus, defaultKernel: defaultKernel, events: make([]string, 0, 100), machineConfigs: make(map[string]resources.MachineConfig), kernels: make(map[string]resources.Kernel), volumes: make(map[string]resources.Volume), vsocks: make(map[string]resources.VsockConfig), authUsername: cfg.Admin.Username, authPasswordHash: cfg.Admin.PasswordHash, publicHTTPS: strings.HasPrefix(strings.ToLower(cfg.PublicURL), "https://"), publicOrigin: strings.TrimRight(strings.TrimSpace(cfg.PublicURL), "/"), workerTimeout: cfg.WorkerTimeout, notifier: notifier, log: log}
+	server := &Server{app: app, ops: ops, catalog: catalog, workers: workers, runtimeStatus: runtimeStatus, defaultKernel: defaultKernel, events: make([]string, 0, 100), machineConfigs: make(map[string]resources.MachineConfig), kernels: make(map[string]resources.Kernel), volumes: make(map[string]resources.Volume), vsocks: make(map[string]resources.VsockConfig), authUsername: cfg.Admin.Username, authPasswordHash: cfg.Admin.PasswordHash, publicHTTPS: strings.HasPrefix(strings.ToLower(cfg.PublicURL), "https://"), publicOrigin: strings.TrimRight(strings.TrimSpace(cfg.PublicURL), "/"), workerTimeout: time.Duration(cfg.WorkerTimeout), notifier: notifier, log: log}
 	resourcePath := os.Getenv("FIRECRACKER_STUDIO_RESOURCE_STATE")
 	if resourcePath == "" {
-		resourcePath = "resources.json"
+		resourcePath = filepath.Join(cfg.StateDir, "resources.json")
 	}
 	resourceStore, err := state.New[resources.State](resourcePath)
 	if err != nil {
@@ -148,14 +149,14 @@ func New(ops *operations.Manager, catalog *images.Catalog, workers *worker.Servi
 	app.GET("/api/v1/vms/{id}", server.vmDetail(workers))
 	app.GET("/api/v1/vms/{id}/process", server.vmProcess(workers))
 	app.GET("/api/v1/vms/{id}/config", server.getMachineConfig)
-	app.PUT("/api/v1/vms/{id}/config", server.putMachineConfig)
-	app.PUT("/api/v1/vms/{id}/config/patch", server.patchMachineConfig)
+	app.PUT("/api/v1/vms/{id}/config", server.putMachineConfig(workers))
+	app.PUT("/api/v1/vms/{id}/config/patch", server.patchMachineConfig(workers))
 	app.GET("/api/v1/vms/{id}/cpu-config", server.getMachineConfig)
-	app.PUT("/api/v1/vms/{id}/cpu-config", server.putMachineConfig)
+	app.PUT("/api/v1/vms/{id}/cpu-config", server.putMachineConfig(workers))
 	app.GET("/api/v1/vms/{id}/boot-source", server.getMachineConfig)
-	app.PUT("/api/v1/vms/{id}/boot-source", server.putMachineConfig)
+	app.PUT("/api/v1/vms/{id}/boot-source", server.putMachineConfig(workers))
 	app.GET("/api/v1/vms/{id}/smt", server.getMachineConfig)
-	app.PUT("/api/v1/vms/{id}/smt", server.putMachineConfig)
+	app.PUT("/api/v1/vms/{id}/smt", server.putMachineConfig(workers))
 	app.GET("/api/v1/vms/{id}/constraints", server.constraints)
 	app.GET("/api/v1/images/kernels", server.listKernels)
 	app.POST("/api/v1/images/kernels", server.registerKernel)
@@ -166,7 +167,7 @@ func New(ops *operations.Manager, catalog *images.Catalog, workers *worker.Servi
 	app.POST("/api/v1/volumes", server.createVolume)
 	app.DELETE("/api/v1/volumes/{id}", server.deleteVolume)
 	app.GET("/api/v1/vms/{id}/vsock", server.getVsock)
-	app.PUT("/api/v1/vms/{id}/vsock", server.putVsock)
+	app.PUT("/api/v1/vms/{id}/vsock", server.putVsock(workers))
 	app.POST("/api/v1/vms", server.createVM(workers, ops, catalog))
 	app.POST("/api/v1/vms/{id}/start", server.startVM(workers))
 	app.POST("/api/v1/vms/{id}/stop", server.stopVM(workers))
@@ -208,7 +209,8 @@ func (s *Server) Handler() func(*fasthttp.RequestCtx) {
 		if origin == allowed {
 			ctx.Response.Header.Set("Access-Control-Allow-Origin", origin)
 			ctx.Response.Header.Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-			ctx.Response.Header.Set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
+			ctx.Response.Header.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+			ctx.Response.Header.Set("Access-Control-Allow-Credentials", "true")
 			ctx.Response.Header.Set("Vary", "Origin")
 		}
 		if ctx.IsOptions() {
@@ -224,6 +226,9 @@ func (s *Server) ListenAndServe(address string) error {
 }
 
 func (s *Server) authorized(ctx *fasthttp.RequestCtx) bool {
+	if ctx.IsOptions() {
+		return true
+	}
 	path := string(ctx.Path())
 	if (path == "/api/v1/health" || path == "/api/v1/auth/login" || path == "/api/v1/auth/status") && (ctx.IsGet() || path == "/api/v1/auth/login") {
 		return true
@@ -265,10 +270,10 @@ func (s *Server) requestLogger(log *slog.Logger) fastglue.FastMiddleware {
 }
 
 func (s *Server) systemInfo(r *fastglue.Request) error {
-	return r.SendJSON(http.StatusOK, map[string]any{"service": "firecracker-studio", "version": "2.0.0", "runtime": s.runtimeStatus, "api": "v1"})
+	return r.SendJSON(http.StatusOK, map[string]any{"service": "firecracker-studio", "version": "2.0.1", "runtime": s.runtimeStatus, "api": "v1"})
 }
 func (s *Server) health(r *fastglue.Request) error {
-	return r.SendJSON(http.StatusOK, map[string]string{"status": "ok", "service": "firecracker-studio", "version": "2.0.0"})
+	return r.SendJSON(http.StatusOK, map[string]string{"status": "ok", "service": "firecracker-studio", "version": "2.0.1"})
 }
 
 func (s *Server) readiness(r *fastglue.Request) error {

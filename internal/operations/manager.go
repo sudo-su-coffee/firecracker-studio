@@ -70,13 +70,18 @@ type Manager struct {
 	workerTimeout time.Duration
 	mu            sync.RWMutex
 	operations    map[string]Operation
+	onFailure     func(Operation, error)
 }
 
 func NewManager(ctx context.Context, workers int, converter Converter, log *slog.Logger) (*Manager, error) {
-	return NewManagerWithTimeout(ctx, workers, converter, log, 30*time.Minute)
+	return NewManagerWithOptions(ctx, workers, converter, log, 30*time.Minute, 24*time.Hour)
 }
 
 func NewManagerWithTimeout(ctx context.Context, workers int, converter Converter, log *slog.Logger, workerTimeout time.Duration) (*Manager, error) {
+	return NewManagerWithOptions(ctx, workers, converter, log, workerTimeout, 24*time.Hour)
+}
+
+func NewManagerWithOptions(ctx context.Context, workers int, converter Converter, log *slog.Logger, workerTimeout, retention time.Duration) (*Manager, error) {
 	if converter == nil {
 		return nil, fmt.Errorf("converter is required")
 	}
@@ -108,7 +113,46 @@ func NewManagerWithTimeout(ctx context.Context, workers int, converter Converter
 		return nil, fmt.Errorf("register conversion task: %w", err)
 	}
 	go queue.Start(ctx)
+	if retention > 0 {
+		go manager.retentionLoop(ctx, retention)
+	}
 	return manager, nil
+}
+
+func (m *Manager) PruneBefore(cutoff time.Time) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	removed := 0
+	for id, op := range m.operations {
+		if op.UpdatedAt.Before(cutoff) && (op.State == StateSucceeded || op.State == StateFailed) {
+			delete(m.operations, id)
+			removed++
+		}
+	}
+	return removed
+}
+
+func (m *Manager) retentionLoop(ctx context.Context, retention time.Duration) {
+	interval := retention / 4
+	if interval < time.Minute {
+		interval = time.Minute
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			m.PruneBefore(time.Now().UTC().Add(-retention))
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func (m *Manager) SetFailureHook(hook func(Operation, error)) {
+	m.mu.Lock()
+	m.onFailure = hook
+	m.mu.Unlock()
 }
 
 func (m *Manager) Enqueue(ctx context.Context, req Request) (Operation, error) {
@@ -144,6 +188,7 @@ func (m *Manager) Enqueue(ctx context.Context, req Request) (Operation, error) {
 	}
 	if _, err := m.queue.Enqueue(ctx, job); err != nil {
 		m.update(op.ID, func(current *Operation) { current.State = StateFailed; current.Error = err.Error() })
+		m.failure(op.ID, err)
 		return Operation{}, fmt.Errorf("enqueue conversion: %w", err)
 	}
 	return op, nil
@@ -167,6 +212,18 @@ func (m *Manager) Get(id string) (Operation, bool) {
 	return op, ok
 }
 
+func (m *Manager) failure(id string, err error) {
+	m.mu.RLock()
+	op, ok, hook := m.operations[id], false, m.onFailure
+	if _, exists := m.operations[id]; exists {
+		ok = true
+	}
+	m.mu.RUnlock()
+	if ok && hook != nil {
+		go hook(op, err)
+	}
+}
+
 func (m *Manager) handleConversion(raw []byte, jobCtx tasqueue.JobCtx) error {
 	var p payload
 	if err := json.Unmarshal(raw, &p); err != nil {
@@ -183,6 +240,7 @@ func (m *Manager) handleConversion(raw []byte, jobCtx tasqueue.JobCtx) error {
 			op.Error = err.Error()
 			op.Logs = append(op.Logs, "failed: "+err.Error())
 		})
+		m.failure(p.OperationID, err)
 		return err
 	}
 	m.update(p.OperationID, func(op *Operation) {

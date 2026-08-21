@@ -79,7 +79,7 @@ cd firecracker-studio
 The server installer downloads a release asset from GitHub and, when systemd is available, creates and starts `firecracker-studio.service`. The default listener is `127.0.0.1:7822`, which is appropriate when a reverse proxy is placed in front of it.
 
 ```bash
-sudo FIRECRACKER_STUDIO_VERSION=v2.0.0 \
+sudo FIRECRACKER_STUDIO_VERSION=v2.0.1 \
   FIRECRACKER_STUDIO_LISTEN=127.0.0.1:7822 \
   bash scripts/install-server.sh
 ```
@@ -140,41 +140,48 @@ sudoedit /etc/firecracker-studio/config.toml
 
 The exact configuration fields are defined in `config.example.toml` and the Go configuration package. At minimum, configure the listener, state/artifact locations, administrator identity, and notification settings. Do not place a plaintext production password in a world-readable file. Use the password-hash field supported by the current configuration schema.
 
-A representative configuration shape is:
+The checked-in schema is flat for service/runtime settings, with nested `[admin]` and `[notifications]` tables:
 
 ```toml
-[server]
+app_name = "firecracker-studio"
 listen = "127.0.0.1:7822"
 public_url = "https://studio.example.com"
+state_dir = "/var/lib/firecracker-studio"
+artifact_dir = "/var/lib/firecracker-studio/artifacts"
+runtime_root = "/var/lib/firecracker-studio/runtime"
+runtime_download_timeout = "10m"
+operation_retention = "24h"
+worker_timeout = "30s"
+operation_timeout = "30m"
+firecracker_api_timeout = "30s"
+operation_workers = 2
+guest_agent_port = 5000
+guest_agent_cid = 3
+network_cidr = "172.16.0.0/16"
 
 [admin]
 username = "admin"
 password_hash = "REPLACE_WITH_BCRYPT_HASH"
 email = "admin@example.com"
 
-[storage]
-state_dir = "/var/lib/firecracker-studio"
-image_dir = "/var/lib/firecracker-studio/images"
-resource_state = "/var/lib/firecracker-studio/resources.json"
-
 [notifications]
 enabled = true
 smtp_host = "smtp.example.com"
 smtp_port = 587
 smtp_username = "studio@example.com"
-smtp_password = "REPLACE_WITH_SECRET"
+smtp_password_file = "/etc/firecracker-studio/smtp-password"
 from = "studio@example.com"
-recipient = "admin@example.com"
+recipients = ["admin@example.com"]
 ```
 
-Use the exact key names shipped in the repository’s `config.example.toml`; the example above illustrates the deployment intent and should not replace the checked-in schema. After editing, restart the service and inspect the journal:
+Use the exact key names shipped in the repository’s `config.example.toml`. After editing, restart the service and inspect the journal:
 
 ```bash
 sudo systemctl restart firecracker-studio
 sudo journalctl -u firecracker-studio -n 100 --no-pager
 ```
 
-The resource registry path is controlled by `FIRECRACKER_STUDIO_RESOURCE_STATE` and defaults to `resources.json` when unset. Keep this file on persistent storage because it contains machine configurations, kernel registrations, volumes, and vsock configuration.[6]
+The resource registry path is controlled by `FIRECRACKER_STUDIO_RESOURCE_STATE` and otherwise defaults to `<state_dir>/resources.json`. Keep this file on persistent storage because it contains machine configurations, kernel registrations, volumes, and vsock configuration.[6]
 
 ## 6. Expose the UI through a domain
 

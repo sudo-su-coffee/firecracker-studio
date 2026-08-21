@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/sudo-su-coffee/firecracker-studio/internal/api"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/config"
@@ -21,7 +23,7 @@ import (
 	"github.com/valyala/fasthttp"
 )
 
-var version = "2.0.0"
+var version = "2.0.1"
 
 func main() {
 	cfg := config.Default()
@@ -52,11 +54,11 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	runtimeManager := runtime.NewManager()
+	runtimeManager := runtime.NewConfiguredManager(cfg.RuntimeRoot, time.Duration(cfg.RuntimeDownloadTimeout))
 	runtimeStatus := runtimeManager.Status(ctx)
 	defaultKernel := filepath.Join(runtimeManager.Root(), "images", "default", "vmlinux")
 	imageConverter := converter.Hybrid{OCI: converter.OCI{ArtifactDir: cfg.ArtifactDir, Profile: converter.Profile{Name: "alpine", KernelPath: defaultKernel}}}
-	ops, err := operations.NewManagerWithTimeout(ctx, cfg.OperationWorkers, imageConverter, log, cfg.OperationTimeout)
+	ops, err := operations.NewManagerWithOptions(ctx, cfg.OperationWorkers, imageConverter, log, time.Duration(cfg.OperationTimeout), time.Duration(cfg.OperationRetention))
 	if err != nil {
 		log.Error("failed to initialize operation manager", "error", err)
 		os.Exit(1)
@@ -66,7 +68,7 @@ func main() {
 		log.Error("failed to initialize image catalog", "error", err)
 		os.Exit(1)
 	}
-	workerService, err := worker.NewConfiguredPersistentService(worker.DirectorySocketFactory{Dir: cfg.ArtifactDir, FirecrackerPath: runtimeStatus.Firecracker}, filepath.Join(cfg.ArtifactDir, "studio-vms.json"), cfg.FirecrackerAPITimeout, cfg.NetworkCIDR, cfg.GuestAgentPort, cfg.GuestAgentCID)
+	workerService, err := worker.NewConfiguredPersistentService(worker.DirectorySocketFactory{Dir: cfg.ArtifactDir, FirecrackerPath: runtimeStatus.Firecracker}, filepath.Join(cfg.ArtifactDir, "studio-vms.json"), time.Duration(cfg.FirecrackerAPITimeout), cfg.NetworkCIDR, cfg.GuestAgentPort, cfg.GuestAgentCID)
 	if err != nil {
 		log.Error("failed to initialize worker service", "error", err)
 		os.Exit(1)
@@ -81,6 +83,11 @@ func main() {
 		smtpPassword = strings.TrimSpace(string(password))
 	}
 	notifier := notifications.New(notifications.Config{Enabled: cfg.Notifications.Enabled, Host: cfg.Notifications.SMTPHost, Port: cfg.Notifications.SMTPPort, Username: cfg.Notifications.SMTPUsername, Password: smtpPassword, From: cfg.Notifications.From, Recipients: cfg.Notifications.Recipients})
+	ops.SetFailureHook(func(op operations.Operation, failure error) {
+		if err := notifier.Send("Firecracker Studio: image conversion failed", fmt.Sprintf("Operation %s for %s failed: %v", op.ID, op.Request.Source, failure)); err != nil {
+			log.Error("conversion failure notification failed", "operation_id", op.ID, "error", err)
+		}
+	})
 	apiServer, err := api.New(ops, catalog, workerService, runtimeStatus, defaultKernel, cfg, log, notifier)
 	if err != nil {
 		log.Error("failed to initialize api", "error", err)

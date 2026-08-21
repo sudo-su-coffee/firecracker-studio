@@ -10,6 +10,8 @@ VERSION="${FIRECRACKER_STUDIO_VERSION:-latest}"
 INSTALL_DIR="${FIRECRACKER_STUDIO_INSTALL_DIR:-/opt/firecracker-studio}"
 BIN_PATH="${FIRECRACKER_STUDIO_BIN:-/usr/local/bin/firecracker-studio}"
 LISTEN_ADDRESS="${FIRECRACKER_STUDIO_LISTEN:-127.0.0.1:7822}"
+CONFIG_PATH="${FIRECRACKER_STUDIO_CONFIG:-/etc/firecracker-studio/config.toml}"
+PUBLIC_URL="${FIRECRACKER_STUDIO_PUBLIC_URL:-}"
 ASSET_NAME="FirecrackerStudio-linux-amd64"
 CHECKSUM_NAME="SHA256SUMS-linux-amd64.txt"
 
@@ -58,12 +60,16 @@ log "Verifying release checksum"
   sha256sum -c "$CHECKSUM_NAME" --ignore-missing
 )
 
-sudo install -d -m 0755 "$INSTALL_DIR" "$INSTALL_DIR/state" "$INSTALL_DIR/logs"
+sudo install -d -m 0755 "$INSTALL_DIR" "$INSTALL_DIR/state" "$INSTALL_DIR/logs" "$(dirname "$CONFIG_PATH")"
 sudo install -m 0755 "$work_dir/$ASSET_NAME" "$BIN_PATH"
 
 if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
   SERVICE_USER="$USER"
   SERVICE_HOME="$HOME"
+  CONFIG_ENV=""
+  [ -f "$CONFIG_PATH" ] && CONFIG_ENV="Environment=FIRECRACKER_STUDIO_CONFIG=$CONFIG_PATH"
+  PUBLIC_ENV=""
+  [ -n "$PUBLIC_URL" ] && PUBLIC_ENV="Environment=FIRECRACKER_STUDIO_PUBLIC_URL=$PUBLIC_URL"
   sudo tee /etc/systemd/system/firecracker-studio.service >/dev/null <<UNIT
 [Unit]
 Description=Firecracker Studio Go web server
@@ -76,6 +82,8 @@ User=${SERVICE_USER}
 WorkingDirectory=${INSTALL_DIR}
 Environment=FIRECRACKER_STUDIO_LISTEN=${LISTEN_ADDRESS}
 Environment=HOME=${SERVICE_HOME}
+${CONFIG_ENV}
+${PUBLIC_ENV}
 ExecStart=${BIN_PATH}
 Restart=on-failure
 RestartSec=3
@@ -87,6 +95,7 @@ UNIT
   sudo systemctl daemon-reload
   sudo systemctl enable --now firecracker-studio.service
   log "systemd service started: firecracker-studio.service"
+  [ -f "$CONFIG_PATH" ] || log "No config.toml found at $CONFIG_PATH; copy config.example.toml there before enabling remote access"
 else
   log "systemd is unavailable; start manually with: FIRECRACKER_STUDIO_LISTEN=${LISTEN_ADDRESS} ${BIN_PATH}"
 fi

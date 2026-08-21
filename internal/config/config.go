@@ -5,11 +5,28 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/pelletier/go-toml/v2"
 )
+
+type Duration time.Duration
+
+func (d *Duration) UnmarshalText(text []byte) error {
+	value := strings.TrimSpace(string(text))
+	if parsed, err := time.ParseDuration(value); err == nil {
+		*d = Duration(parsed)
+		return nil
+	}
+	nanos, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid duration %q: use a Go duration such as 30s or 10m", value)
+	}
+	*d = Duration(nanos)
+	return nil
+}
 
 type AdminConfig struct {
 	Username     string `toml:"username" json:"username"`
@@ -29,21 +46,23 @@ type NotificationConfig struct {
 }
 
 type Config struct {
-	AppName               string             `toml:"app_name" json:"appName"`
-	ListenAddress         string             `toml:"listen" json:"listenAddress"`
-	PublicURL             string             `toml:"public_url" json:"publicUrl"`
-	StateDir              string             `toml:"state_dir" json:"stateDir"`
-	ArtifactDir           string             `toml:"artifact_dir" json:"artifactDir"`
-	OperationRetention    time.Duration      `toml:"operation_retention" json:"operationRetention"`
-	WorkerTimeout         time.Duration      `toml:"worker_timeout" json:"workerTimeout"`
-	OperationTimeout      time.Duration      `toml:"operation_timeout" json:"operationTimeout"`
-	FirecrackerAPITimeout time.Duration      `toml:"firecracker_api_timeout" json:"firecrackerApiTimeout"`
-	OperationWorkers      int                `toml:"operation_workers" json:"operationWorkers"`
-	GuestAgentPort        uint32             `toml:"guest_agent_port" json:"guestAgentPort"`
-	GuestAgentCID         uint32             `toml:"guest_agent_cid" json:"guestAgentCID"`
-	NetworkCIDR           string             `toml:"network_cidr" json:"networkCIDR"`
-	Admin                 AdminConfig        `toml:"admin" json:"admin"`
-	Notifications         NotificationConfig `toml:"notifications" json:"notifications"`
+	AppName                string             `toml:"app_name" json:"appName"`
+	ListenAddress          string             `toml:"listen" json:"listenAddress"`
+	PublicURL              string             `toml:"public_url" json:"publicUrl"`
+	StateDir               string             `toml:"state_dir" json:"stateDir"`
+	ArtifactDir            string             `toml:"artifact_dir" json:"artifactDir"`
+	RuntimeRoot            string             `toml:"runtime_root" json:"runtimeRoot"`
+	RuntimeDownloadTimeout Duration           `toml:"runtime_download_timeout" json:"runtimeDownloadTimeout"`
+	OperationRetention     Duration           `toml:"operation_retention" json:"operationRetention"`
+	WorkerTimeout          Duration           `toml:"worker_timeout" json:"workerTimeout"`
+	OperationTimeout       Duration           `toml:"operation_timeout" json:"operationTimeout"`
+	FirecrackerAPITimeout  Duration           `toml:"firecracker_api_timeout" json:"firecrackerApiTimeout"`
+	OperationWorkers       int                `toml:"operation_workers" json:"operationWorkers"`
+	GuestAgentPort         uint32             `toml:"guest_agent_port" json:"guestAgentPort"`
+	GuestAgentCID          uint32             `toml:"guest_agent_cid" json:"guestAgentCID"`
+	NetworkCIDR            string             `toml:"network_cidr" json:"networkCIDR"`
+	Admin                  AdminConfig        `toml:"admin" json:"admin"`
+	Notifications          NotificationConfig `toml:"notifications" json:"notifications"`
 }
 
 func Default() Config {
@@ -54,21 +73,23 @@ func Default() Config {
 		home = filepath.Join(home, "FirecrackerStudio")
 	}
 	return Config{
-		AppName:               "firecracker-studio",
-		ListenAddress:         "127.0.0.1:7822",
-		PublicURL:             "http://127.0.0.1:7822",
-		StateDir:              home,
-		ArtifactDir:           filepath.Join(home, "artifacts"),
-		OperationRetention:    24 * time.Hour,
-		WorkerTimeout:         30 * time.Second,
-		OperationTimeout:      30 * time.Minute,
-		FirecrackerAPITimeout: 30 * time.Second,
-		OperationWorkers:      2,
-		GuestAgentPort:        5000,
-		GuestAgentCID:         3,
-		NetworkCIDR:           "172.16.0.0/16",
-		Admin:                 AdminConfig{Username: "admin"},
-		Notifications:         NotificationConfig{SMTPPort: 587},
+		AppName:                "firecracker-studio",
+		ListenAddress:          "127.0.0.1:7822",
+		PublicURL:              "http://127.0.0.1:7822",
+		StateDir:               home,
+		ArtifactDir:            filepath.Join(home, "artifacts"),
+		RuntimeRoot:            filepath.Join(home, "runtime"),
+		RuntimeDownloadTimeout: Duration(10 * time.Minute),
+		OperationRetention:     Duration(24 * time.Hour),
+		WorkerTimeout:          Duration(30 * time.Second),
+		OperationTimeout:       Duration(30 * time.Minute),
+		FirecrackerAPITimeout:  Duration(30 * time.Second),
+		OperationWorkers:       2,
+		GuestAgentPort:         5000,
+		GuestAgentCID:          3,
+		NetworkCIDR:            "172.16.0.0/16",
+		Admin:                  AdminConfig{Username: "admin"},
+		Notifications:          NotificationConfig{SMTPPort: 587},
 	}
 }
 
@@ -105,8 +126,11 @@ func (c Config) Validate() error {
 	if c.ListenAddress == "" {
 		return fmt.Errorf("listen address is required")
 	}
-	if c.StateDir == "" || c.ArtifactDir == "" {
-		return fmt.Errorf("state and artifact directories are required")
+	if c.StateDir == "" || c.ArtifactDir == "" || c.RuntimeRoot == "" {
+		return fmt.Errorf("state, artifact, and runtime directories are required")
+	}
+	if c.RuntimeDownloadTimeout <= 0 {
+		return fmt.Errorf("runtime download timeout must be positive")
 	}
 	if c.OperationRetention <= 0 || c.WorkerTimeout <= 0 || c.OperationTimeout <= 0 || c.FirecrackerAPITimeout <= 0 {
 		return fmt.Errorf("retention and all timeouts must be positive")
