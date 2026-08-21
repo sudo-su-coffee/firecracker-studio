@@ -91,7 +91,7 @@ onMounted(load)
 
 <template>
   <main class="page-content route-view">
-    <header class="page-heading"><div><span class="section-kicker">FIRECRACKER STUDIO · {{ page.toUpperCase() }}</span><h2>{{ title }}</h2><p>API-backed control surface for {{ apiRoutes.length }} mapped backend capability{{ apiRoutes.length === 1 ? 'y' : 'ies' }}.</p></div><button class="primary-button compact" :disabled="busy" @click="load">↻ Refresh</button></header>
+    <header class="page-heading"><div><span class="section-kicker">FIRECRACKER STUDIO · {{ page.toUpperCase() }}</span><h2>{{ title }}</h2><p>API-backed control surface for {{ apiRoutes.length }} mapped backend {{ apiRoutes.length === 1 ? 'capability' : 'capabilities' }}.</p></div><button class="primary-button compact" :disabled="busy" @click="load">↻ Refresh</button></header>
     <div v-if="error" class="warning-banner panel"><strong>Request failed</strong><span>{{ error }}</span></div>
     <div v-if="message" class="info-banner panel"><strong>{{ message }}</strong></div>
     <section class="panel route-api-map"><div class="section-kicker">MAPPED API ROUTES</div><div class="api-route-list"><code v-for="item in apiRoutes" :key="item">{{ item }}</code></div></section>
