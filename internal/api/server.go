@@ -237,14 +237,7 @@ func (s *Server) authorized(ctx *fasthttp.RequestCtx) bool {
 	if token != "" {
 		want := "Bearer " + token
 		got := string(ctx.Request.Header.Peek("Authorization"))
-		if got == "" {
-			if queryToken := string(ctx.QueryArgs().Peek("access_token")); queryToken != "" {
-				got = "Bearer " + queryToken
-			}
-		}
-		if subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1 {
-			return true
-		}
+		return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
 	}
 	if !s.authConfigured {
 		return true
