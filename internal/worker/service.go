@@ -24,32 +24,56 @@ type processLauncher interface {
 }
 
 type Service struct {
-	factory   SocketFactory
-	launcher  processLauncher
-	mu        sync.RWMutex
-	vms       map[string]VM
-	clients   map[string]*firecracker.Client
-	processes map[string]*exec.Cmd
-	store     *state.Store[VM]
-	network   *NetworkManager
+	factory        SocketFactory
+	launcher       processLauncher
+	clientTimeout  time.Duration
+	guestAgentPort uint32
+	guestAgentCID  uint32
+	mu             sync.RWMutex
+	vms            map[string]VM
+	clients        map[string]*firecracker.Client
+	processes      map[string]*exec.Cmd
+	store          *state.Store[VM]
+	network        *NetworkManager
 }
 
-func NewService(factory SocketFactory) (*Service, error) { return newService(factory, nil) }
+func NewService(factory SocketFactory) (*Service, error) {
+	return newConfiguredService(factory, nil, 30*time.Second, "172.16.0.0/16", 5000, 3)
+}
 
 func NewPersistentService(factory SocketFactory, statePath string) (*Service, error) {
+	return NewConfiguredPersistentService(factory, statePath, 30*time.Second, "172.16.0.0/16", 5000, 3)
+}
+
+func NewConfiguredPersistentService(factory SocketFactory, statePath string, clientTimeout time.Duration, networkCIDR string, guestAgentPort, guestAgentCID uint32) (*Service, error) {
 	store, err := state.New[VM](statePath)
 	if err != nil {
 		return nil, err
 	}
-	return newService(factory, store)
+	return newConfiguredService(factory, store, clientTimeout, networkCIDR, guestAgentPort, guestAgentCID)
 }
 
 func newService(factory SocketFactory, store *state.Store[VM]) (*Service, error) {
+	return newConfiguredService(factory, store, 30*time.Second, "172.16.0.0/16", 5000, 3)
+}
+
+func newConfiguredService(factory SocketFactory, store *state.Store[VM], clientTimeout time.Duration, networkCIDR string, guestAgentPort, guestAgentCID uint32) (*Service, error) {
 	if factory == nil {
 		return nil, fmt.Errorf("socket factory is required")
 	}
 	launcher, _ := factory.(processLauncher)
-	s := &Service{factory: factory, launcher: launcher, vms: map[string]VM{}, clients: map[string]*firecracker.Client{}, processes: map[string]*exec.Cmd{}, store: store, network: NewNetworkManager()}
+	if clientTimeout <= 0 {
+		clientTimeout = 30 * time.Second
+	}
+	if guestAgentPort == 0 {
+		guestAgentPort = 5000
+	}
+	if guestAgentCID == 0 {
+		guestAgentCID = 3
+	}
+	network := NewNetworkManager()
+	network.BridgeCIDRBase = networkCIDR
+	s := &Service{factory: factory, launcher: launcher, clientTimeout: clientTimeout, guestAgentPort: guestAgentPort, guestAgentCID: guestAgentCID, vms: map[string]VM{}, clients: map[string]*firecracker.Client{}, processes: map[string]*exec.Cmd{}, store: store, network: network}
 	if store != nil {
 		items, err := store.Load()
 		if err != nil {
@@ -60,7 +84,7 @@ func newService(factory SocketFactory, store *state.Store[VM]) (*Service, error)
 			vm.Logs = append(vm.Logs, time.Now().UTC().Format(time.RFC3339)+" recovered after Studio restart; process liveness must be checked")
 			s.vms[vm.ID] = vm
 			if vm.SocketPath != "" {
-				if client, err := firecracker.NewClient(vm.SocketPath, 30*time.Second); err == nil {
+				if client, err := firecracker.NewClient(vm.SocketPath, s.clientTimeout); err == nil {
 					s.clients[vm.ID] = client
 				}
 			}
@@ -81,7 +105,7 @@ func (s *Service) ExecGuest(ctx context.Context, id, command string) ([]byte, er
 	if err != nil {
 		return nil, err
 	}
-	conn, err := client.OpenVsock(ctx, 5000)
+	conn, err := client.OpenVsock(ctx, s.guestAgentPort)
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +152,7 @@ func (s *Service) Create(ctx context.Context, req VMRequest) (VM, error) {
 	if err != nil {
 		return VM{}, fmt.Errorf("allocate VM socket: %w", err)
 	}
-	client, err := firecracker.NewClient(socket, 30*time.Second)
+	client, err := firecracker.NewClient(socket, s.clientTimeout)
 	if err != nil {
 		return VM{}, err
 	}
@@ -178,7 +202,7 @@ func (s *Service) Create(ctx context.Context, req VMRequest) (VM, error) {
 			_ = proc.Process.Kill()
 			return VM{}, fmt.Errorf("configure network interface: %w", err)
 		}
-		if err := client.SetVsock(ctx, firecracker.Vsock{GuestCID: 3, HostPath: filepath.Join(filepath.Dir(socket), "vsock.sock")}); err != nil {
+		if err := client.SetVsock(ctx, firecracker.Vsock{GuestCID: s.guestAgentCID, HostPath: filepath.Join(filepath.Dir(socket), "vsock.sock")}); err != nil {
 			_ = proc.Process.Kill()
 			return VM{}, fmt.Errorf("configure vsock: %w", err)
 		}

@@ -6,12 +6,14 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/sudo-su-coffee/firecracker-studio/internal/api"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/config"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/converter"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/images"
+	"github.com/sudo-su-coffee/firecracker-studio/internal/notifications"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/operations"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/runtime"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/web"
@@ -54,7 +56,7 @@ func main() {
 	runtimeStatus := runtimeManager.Status(ctx)
 	defaultKernel := filepath.Join(runtimeManager.Root(), "images", "default", "vmlinux")
 	imageConverter := converter.Hybrid{OCI: converter.OCI{ArtifactDir: cfg.ArtifactDir, Profile: converter.Profile{Name: "alpine", KernelPath: defaultKernel}}}
-	ops, err := operations.NewManager(ctx, cfg.OperationWorkers, imageConverter, log)
+	ops, err := operations.NewManagerWithTimeout(ctx, cfg.OperationWorkers, imageConverter, log, cfg.OperationTimeout)
 	if err != nil {
 		log.Error("failed to initialize operation manager", "error", err)
 		os.Exit(1)
@@ -64,12 +66,22 @@ func main() {
 		log.Error("failed to initialize image catalog", "error", err)
 		os.Exit(1)
 	}
-	workerService, err := worker.NewPersistentService(worker.DirectorySocketFactory{Dir: cfg.ArtifactDir, FirecrackerPath: runtimeStatus.Firecracker}, filepath.Join(cfg.ArtifactDir, "studio-vms.json"))
+	workerService, err := worker.NewConfiguredPersistentService(worker.DirectorySocketFactory{Dir: cfg.ArtifactDir, FirecrackerPath: runtimeStatus.Firecracker}, filepath.Join(cfg.ArtifactDir, "studio-vms.json"), cfg.FirecrackerAPITimeout, cfg.NetworkCIDR, cfg.GuestAgentPort, cfg.GuestAgentCID)
 	if err != nil {
 		log.Error("failed to initialize worker service", "error", err)
 		os.Exit(1)
 	}
-	apiServer, err := api.New(ops, catalog, workerService, runtimeStatus, defaultKernel, cfg, log)
+	smtpPassword := cfg.Notifications.SMTPPassword
+	if cfg.Notifications.Enabled && smtpPassword == "" && cfg.Notifications.SMTPPasswordFile != "" {
+		password, readErr := os.ReadFile(cfg.Notifications.SMTPPasswordFile)
+		if readErr != nil {
+			log.Error("failed to read SMTP password file", "path", cfg.Notifications.SMTPPasswordFile, "error", readErr)
+			os.Exit(1)
+		}
+		smtpPassword = strings.TrimSpace(string(password))
+	}
+	notifier := notifications.New(notifications.Config{Enabled: cfg.Notifications.Enabled, Host: cfg.Notifications.SMTPHost, Port: cfg.Notifications.SMTPPort, Username: cfg.Notifications.SMTPUsername, Password: smtpPassword, From: cfg.Notifications.From, Recipients: cfg.Notifications.Recipients})
+	apiServer, err := api.New(ops, catalog, workerService, runtimeStatus, defaultKernel, cfg, log, notifier)
 	if err != nil {
 		log.Error("failed to initialize api", "error", err)
 		os.Exit(1)

@@ -73,6 +73,10 @@ type Manager struct {
 }
 
 func NewManager(ctx context.Context, workers int, converter Converter, log *slog.Logger) (*Manager, error) {
+	return NewManagerWithTimeout(ctx, workers, converter, log, 30*time.Minute)
+}
+
+func NewManagerWithTimeout(ctx context.Context, workers int, converter Converter, log *slog.Logger, workerTimeout time.Duration) (*Manager, error) {
 	if converter == nil {
 		return nil, fmt.Errorf("converter is required")
 	}
@@ -90,11 +94,14 @@ func NewManager(ctx context.Context, workers int, converter Converter, log *slog
 	if err != nil {
 		return nil, fmt.Errorf("create operation queue: %w", err)
 	}
+	if workerTimeout <= 0 {
+		workerTimeout = 30 * time.Minute
+	}
 	manager := &Manager{
 		queue:         queue,
 		converter:     converter,
 		log:           log,
-		workerTimeout: 30 * time.Minute,
+		workerTimeout: workerTimeout,
 		operations:    make(map[string]Operation),
 	}
 	if err := queue.RegisterTask(conversionTask, manager.handleConversion, tasqueue.TaskOpts{Concurrency: uint32(workers)}); err != nil {

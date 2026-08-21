@@ -8,7 +8,12 @@ state_dir = "/var/lib/firecracker-studio"
 artifact_dir = "/var/lib/firecracker-studio/artifacts"
 operation_retention = "24h"
 worker_timeout = "30s"
+operation_timeout = "30m"
+firecracker_api_timeout = "30s"
 operation_workers = 2
+guest_agent_port = 5000
+guest_agent_cid = 3
+network_cidr = "172.16.0.0/16"
 
 [admin]
 username = "admin"
@@ -22,5 +27,6 @@ smtp_host = "smtp.example.com"
 smtp_port = 587
 smtp_username = "studio@example.com"
 smtp_password_file = "/etc/firecracker-studio/smtp-password"
+# If smtp_password_file is set, its contents are loaded at startup.
 from = "studio@example.com"
 recipients = ["admin@example.com"]

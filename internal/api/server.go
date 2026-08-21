@@ -13,6 +13,7 @@ import (
 
 	"github.com/sudo-su-coffee/firecracker-studio/internal/config"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/images"
+	"github.com/sudo-su-coffee/firecracker-studio/internal/notifications"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/operations"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/resources"
 	"github.com/sudo-su-coffee/firecracker-studio/internal/runtime"
@@ -37,6 +38,10 @@ type Server struct {
 	authPasswordHash string
 	authKey          []byte
 	publicHTTPS      bool
+	publicOrigin     string
+	workerTimeout    time.Duration
+	notifier         *notifications.Notifier
+	log              *slog.Logger
 	eventsMu         sync.RWMutex
 	events           []string
 	resourceMu       sync.RWMutex
@@ -74,7 +79,7 @@ type metricsSnapshot struct {
 	Host              hostMetrics `json:"host"`
 }
 
-func New(ops *operations.Manager, catalog *images.Catalog, workers *worker.Service, runtimeStatus runtime.Status, defaultKernel string, cfg config.Config, log *slog.Logger) (*Server, error) {
+func New(ops *operations.Manager, catalog *images.Catalog, workers *worker.Service, runtimeStatus runtime.Status, defaultKernel string, cfg config.Config, log *slog.Logger, configuredNotifiers ...*notifications.Notifier) (*Server, error) {
 	if ops == nil {
 		return nil, fmt.Errorf("operation manager is required")
 	}
@@ -88,7 +93,11 @@ func New(ops *operations.Manager, catalog *images.Catalog, workers *worker.Servi
 		log = slog.Default()
 	}
 	app := fastglue.New()
-	server := &Server{app: app, ops: ops, catalog: catalog, workers: workers, runtimeStatus: runtimeStatus, defaultKernel: defaultKernel, events: make([]string, 0, 100), machineConfigs: make(map[string]resources.MachineConfig), kernels: make(map[string]resources.Kernel), volumes: make(map[string]resources.Volume), vsocks: make(map[string]resources.VsockConfig), authUsername: cfg.Admin.Username, authPasswordHash: cfg.Admin.PasswordHash, publicHTTPS: strings.HasPrefix(strings.ToLower(cfg.PublicURL), "https://")}
+	var notifier *notifications.Notifier
+	if len(configuredNotifiers) > 0 {
+		notifier = configuredNotifiers[0]
+	}
+	server := &Server{app: app, ops: ops, catalog: catalog, workers: workers, runtimeStatus: runtimeStatus, defaultKernel: defaultKernel, events: make([]string, 0, 100), machineConfigs: make(map[string]resources.MachineConfig), kernels: make(map[string]resources.Kernel), volumes: make(map[string]resources.Volume), vsocks: make(map[string]resources.VsockConfig), authUsername: cfg.Admin.Username, authPasswordHash: cfg.Admin.PasswordHash, publicHTTPS: strings.HasPrefix(strings.ToLower(cfg.PublicURL), "https://"), publicOrigin: strings.TrimRight(strings.TrimSpace(cfg.PublicURL), "/"), workerTimeout: cfg.WorkerTimeout, notifier: notifier, log: log}
 	resourcePath := os.Getenv("FIRECRACKER_STUDIO_RESOURCE_STATE")
 	if resourcePath == "" {
 		resourcePath = "resources.json"
@@ -190,6 +199,9 @@ func (s *Server) Handler() func(*fasthttp.RequestCtx) {
 		}
 		origin := string(ctx.Request.Header.Peek("Origin"))
 		allowed := os.Getenv("FIRECRACKER_STUDIO_CORS_ORIGIN")
+		if allowed == "" {
+			allowed = s.publicOrigin
+		}
 		if allowed == "" {
 			allowed = "http://localhost:5173"
 		}
@@ -477,8 +489,11 @@ func (s *Server) createVM(service *worker.Service, ops *operations.Manager, cata
 		if req.KernelPath == "" || req.RootfsPath == "" {
 			return r.SendJSON(http.StatusBadRequest, map[string]string{"error": "artifact_not_ready", "message": "kernel and rootfs paths are not available; complete conversion and install runtime assets first"})
 		}
-		vm, err := service.Create(r.RequestCtx, req)
+		ctx, cancel := s.workerContext()
+		defer cancel()
+		vm, err := service.Create(ctx, req)
 		if err != nil {
+			s.notify("Firecracker Studio: VM creation failed", fmt.Sprintf("VM creation failed: %v", err))
 			return r.SendJSON(http.StatusBadRequest, map[string]string{"error": "create_vm_failed", "message": err.Error()})
 		}
 		return r.SendJSON(http.StatusCreated, vm)
@@ -517,11 +532,16 @@ func (s *Server) vmStateAction(service *worker.Service, pause bool) fastglue.Fas
 		var vm worker.VM
 		var err error
 		if pause {
-			vm, err = service.Pause(r.RequestCtx, id)
+			ctx, cancel := s.workerContext()
+			defer cancel()
+			vm, err = service.Pause(ctx, id)
 		} else {
-			vm, err = service.Resume(r.RequestCtx, id)
+			ctx, cancel := s.workerContext()
+			defer cancel()
+			vm, err = service.Resume(ctx, id)
 		}
 		if err != nil {
+			s.notify("Firecracker Studio: VM state change failed", fmt.Sprintf("VM %s state change failed: %v", id, err))
 			return r.SendJSON(http.StatusBadRequest, map[string]string{"error": "vm_state_change_failed", "message": err.Error()})
 		}
 		return r.SendJSON(http.StatusOK, vm)
@@ -563,11 +583,16 @@ func (s *Server) snapshotAction(service *worker.Service, restore bool) fastglue.
 		}
 		var err error
 		if restore {
-			err = service.RestoreSnapshot(r.RequestCtx, id, req.SnapshotPath, req.MemoryPath)
+			ctx, cancel := s.workerContext()
+			defer cancel()
+			err = service.RestoreSnapshot(ctx, id, req.SnapshotPath, req.MemoryPath)
 		} else {
-			err = service.CreateSnapshot(r.RequestCtx, id, req.SnapshotPath, req.MemoryPath)
+			ctx, cancel := s.workerContext()
+			defer cancel()
+			err = service.CreateSnapshot(ctx, id, req.SnapshotPath, req.MemoryPath)
 		}
 		if err != nil {
+			s.notify("Firecracker Studio: snapshot operation failed", fmt.Sprintf("VM %s snapshot operation failed: %v", id, err))
 			return r.SendJSON(http.StatusBadRequest, map[string]string{"error": "snapshot_operation_failed", "message": err.Error()})
 		}
 		return r.SendJSON(http.StatusAccepted, map[string]string{"status": "accepted", "vmId": id})
@@ -583,10 +608,11 @@ func (s *Server) execGuest(service *worker.Service) fastglue.FastRequestHandler 
 		if err := r.Decode(&input, "json"); err != nil {
 			return r.SendJSON(http.StatusBadRequest, map[string]string{"error": "invalid_request"})
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := s.workerContext()
 		defer cancel()
 		output, err := service.ExecGuest(ctx, id, input.Command)
 		if err != nil {
+			s.notify("Firecracker Studio: guest command failed", fmt.Sprintf("VM %s guest command failed: %v", id, err))
 			return r.SendJSON(http.StatusBadGateway, map[string]string{"error": "guest_command_failed", "message": err.Error()})
 		}
 		return r.SendJSON(http.StatusOK, map[string]any{"command": input.Command, "output": string(output)})
@@ -602,15 +628,38 @@ func (s *Server) vmAction(service *worker.Service, start bool) fastglue.FastRequ
 		var vm worker.VM
 		var err error
 		if start {
-			vm, err = service.Start(r.RequestCtx, id)
+			ctx, cancel := s.workerContext()
+			defer cancel()
+			vm, err = service.Start(ctx, id)
 		} else {
-			vm, err = service.Stop(r.RequestCtx, id)
+			ctx, cancel := s.workerContext()
+			defer cancel()
+			vm, err = service.Stop(ctx, id)
 		}
 		if err != nil {
+			s.notify("Firecracker Studio: VM lifecycle action failed", fmt.Sprintf("VM %s lifecycle action failed: %v", id, err))
 			return r.SendJSON(http.StatusBadRequest, map[string]string{"error": "vm_action_failed", "message": err.Error()})
 		}
 		return r.SendJSON(http.StatusOK, vm)
 	}
+}
+
+func (s *Server) notify(subject, body string) {
+	if s.notifier == nil {
+		return
+	}
+	go func() {
+		if err := s.notifier.Send(subject, body); err != nil && s.log != nil {
+			s.log.Error("notification delivery failed", "subject", subject, "error", err)
+		}
+	}()
+}
+
+func (s *Server) workerContext() (context.Context, context.CancelFunc) {
+	if s.workerTimeout <= 0 {
+		return context.WithTimeout(context.Background(), 30*time.Second)
+	}
+	return context.WithTimeout(context.Background(), s.workerTimeout)
 }
 
 func (s *Server) listOperations(ops *operations.Manager) fastglue.FastRequestHandler {
